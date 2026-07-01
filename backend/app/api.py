@@ -13,12 +13,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import settings
+from .rate_limiter import RATE_LIMITS, RateLimiter
+from .redis_client import get_redis
 from .schemas import (
     BatchIngestRequest,
     ClaimRequest,
@@ -38,6 +40,21 @@ from .worker import PipelineWorker
 
 def _service(request: Request) -> GovernanceService:
     return request.app.state.service
+
+
+def rate_limit(name: str):
+    """按端点构造限流依赖。身份取 X-User 头（若有），否则取客户端 IP。"""
+    rule = RATE_LIMITS[name]
+
+    def dependency(request: Request) -> None:
+        limiter: RateLimiter = request.app.state.rate_limiter
+        identity = request.headers.get("x-user") or (
+            request.client.host if request.client else "anonymous"
+        )
+        if not limiter.check(name, identity, rule):
+            raise HTTPException(status_code=429, detail="请求过于频繁，请稍后再试")
+
+    return dependency
 
 
 # --- 领域模块路由（对齐设计 2.2 的边界） --------------------------------------
@@ -79,12 +96,12 @@ def dead_letters(request: Request, offset: int = 0, limit: int = 50) -> dict[str
 
 # --- ingestion / pipeline ----------------------------------------------------
 
-@ingestion_router.post("/content/upload")
+@ingestion_router.post("/content/upload", dependencies=[Depends(rate_limit("content.upload"))])
 def upload_content(request: Request, payload: ContentUploadRequest) -> dict[str, Any]:
     return _service(request).ingest_content(payload.model_dump())
 
 
-@ingestion_router.post("/content/batch")
+@ingestion_router.post("/content/batch", dependencies=[Depends(rate_limit("content.batch"))])
 def batch_content(request: Request, payload: BatchIngestRequest) -> dict[str, Any]:
     return _service(request).ingest_batch(payload.model_dump())
 
@@ -141,7 +158,9 @@ def claim_task(request: Request, task_id: str, payload: Optional[ClaimRequest] =
     return _service(request).claim_task(task_id, reviewer_id)
 
 
-@human_router.post("/{task_id}/decide")
+@human_router.post(
+    "/{task_id}/decide", dependencies=[Depends(rate_limit("review.human.decide"))]
+)
 def decide_task(request: Request, task_id: str, payload: DecideRequest) -> dict[str, Any]:
     return _service(request).decide_task(task_id, payload.model_dump())
 
@@ -177,6 +196,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         worker = PipelineWorker(service)
         app.state.service = service
         app.state.worker = worker
+        app.state.rate_limiter = RateLimiter(get_redis())
         worker.start()
         try:
             yield

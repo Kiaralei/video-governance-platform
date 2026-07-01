@@ -311,6 +311,39 @@ class MvpFlowTest(unittest.TestCase):
             self.assertEqual(dead_letters["items"][0]["exception_type"], "RuntimeError")
             self.assertEqual(dead_letters["items"][0]["content_id"], queued["content_id"])
 
+    def test_rate_limiter_blocks_after_limit(self) -> None:
+        import fakeredis
+
+        from backend.app.rate_limiter import RateLimiter, RateLimitRule
+
+        limiter = RateLimiter(fakeredis.FakeStrictRedis(decode_responses=True))
+        rule = RateLimitRule(max_requests=2, window_seconds=60)
+        self.assertTrue(limiter.check("op", "user_a", rule))
+        self.assertTrue(limiter.check("op", "user_a", rule))
+        self.assertFalse(limiter.check("op", "user_a", rule))  # 第 3 次超限
+        self.assertTrue(limiter.check("op", "user_b", rule))  # 不同身份独立计数
+        # 无 Redis -> 优雅降级放行
+        self.assertTrue(RateLimiter(None).check("op", "user_a", rule))
+
+    def test_rate_limited_endpoint_returns_429(self) -> None:
+        import fakeredis
+        from fastapi.testclient import TestClient
+
+        from backend.app.api import create_app
+        from backend.app.rate_limiter import RateLimiter
+
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(db_path=Path(tmp) / "test.sqlite3")
+            with TestClient(app) as client:
+                # 注入 fakeredis 后端的限流器（默认无 Redis 会降级放行）。
+                app.state.rate_limiter = RateLimiter(fakeredis.FakeStrictRedis(decode_responses=True))
+                payload = {"title": "T", "description": "D", "creator_id": "c"}
+                statuses = [
+                    client.post("/api/v1/content/upload", json=payload).status_code for _ in range(11)
+                ]
+            self.assertEqual(statuses[:10], [200] * 10)  # content.upload 限额 10/60s
+            self.assertEqual(statuses[10], 429)
+
     def test_llm_review_returns_none_without_api_key(self) -> None:
         with patch.dict(os.environ, {"LLM_API_KEY": "", "OPENAI_API_KEY": ""}):
             self.assertIsNone(review_with_configured_llm({"metadata": {"title": "Neutral"}}))
