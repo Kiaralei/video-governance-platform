@@ -200,6 +200,12 @@ class EvidenceExtractor:
             str(path),
             "-vf",
             "fps=1/15,scale=320:-1",
+            # JPEG (mjpeg) requires full-range YUV. Real-world H.264 is limited
+            # range (color_range=tv); recent ffmpeg refuses to encode it to
+            # mjpeg without an explicit full-range output format, so force it
+            # here instead of failing keyframe extraction on every normal video.
+            "-pix_fmt",
+            "yuvj420p",
             "-frames:v",
             "3",
             str(pattern),

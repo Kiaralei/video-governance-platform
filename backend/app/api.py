@@ -18,15 +18,28 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from .auth import (
+    Principal,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    get_current_user,
+    require_permission,
+)
 from .config import settings
 from .rate_limiter import RATE_LIMITS, RateLimiter
 from .redis_client import get_redis
 from .schemas import (
     BatchIngestRequest,
-    ClaimRequest,
     ContentUploadRequest,
+    CreateDimensionRequest,
+    CreatePolicyVersionRequest,
     DecideRequest,
     DrainRequest,
+    LoginRequest,
+    RefreshRequest,
+    TransitionRequest,
+    UpdateDimensionRequest,
 )
 from .services import (
     ConflictError,
@@ -59,12 +72,51 @@ def rate_limit(name: str):
 
 # --- 领域模块路由（对齐设计 2.2 的边界） --------------------------------------
 
+auth_router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 system_router = APIRouter(prefix="/api/v1", tags=["system"])
 ingestion_router = APIRouter(prefix="/api/v1", tags=["ingestion"])
 machine_router = APIRouter(prefix="/api/v1", tags=["machine"])
 evidence_router = APIRouter(prefix="/api/v1", tags=["evidence"])
 human_router = APIRouter(prefix="/api/v1/review/human", tags=["human_review"])
+policy_router = APIRouter(prefix="/api/v1/policy", tags=["policy"])
 dev_router = APIRouter(prefix="/api/v1/dev", tags=["dev"])
+
+
+# --- auth --------------------------------------------------------------------
+
+@auth_router.post("/login", dependencies=[Depends(rate_limit("auth.login"))])
+def login(request: Request, payload: LoginRequest) -> dict[str, Any]:
+    principal = _service(request).authenticate(payload.username, payload.password)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    return {
+        "access_token": create_access_token(principal["user_id"], principal["roles"]),
+        "refresh_token": create_refresh_token(principal["user_id"]),
+        "token_type": "bearer",
+        "roles": principal["roles"],
+    }
+
+
+@auth_router.post("/refresh")
+def refresh(request: Request, payload: RefreshRequest) -> dict[str, Any]:
+    try:
+        data = decode_token(payload.refresh_token)
+    except Exception:
+        raise HTTPException(status_code=401, detail="refresh 令牌无效或已过期")
+    if data.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="需要 refresh 令牌")
+    user = _service(request).get_user(str(data.get("sub", "")))
+    if user is None:
+        raise HTTPException(status_code=401, detail="用户不存在或已停用")
+    return {
+        "access_token": create_access_token(user["user_id"], user["roles"]),
+        "token_type": "bearer",
+    }
+
+
+@auth_router.get("/me")
+def me(user: Principal = Depends(get_current_user)) -> dict[str, Any]:
+    return {"user_id": user.user_id, "roles": user.roles}
 
 
 # --- system ------------------------------------------------------------------
@@ -89,7 +141,9 @@ def audit(request: Request, content_id: Optional[str] = None) -> dict[str, Any]:
     return _service(request).get_audit(content_id=content_id)
 
 
-@system_router.get("/system/dead-letters")
+@system_router.get(
+    "/system/dead-letters", dependencies=[Depends(require_permission("system.dead_letters"))]
+)
 def dead_letters(request: Request, offset: int = 0, limit: int = 50) -> dict[str, Any]:
     return _service(request).list_dead_letters(offset=offset, limit=limit)
 
@@ -140,29 +194,113 @@ def evidence(request: Request, evidence_id: str) -> dict[str, Any]:
 
 # --- human review (注意：静态路径 /queue 必须声明在 /{task_id} 之前) ----------
 
-@human_router.get("/queue")
+@human_router.get("/queue", dependencies=[Depends(require_permission("review.human.queue"))])
 def review_queue(
     request: Request, offset: int = 0, limit: int = 20, status: str = "pending"
 ) -> dict[str, Any]:
     return _service(request).list_queue(offset=offset, limit=limit, status=status)
 
 
-@human_router.get("/{task_id}")
+@human_router.get("/{task_id}", dependencies=[Depends(require_permission("review.human.queue"))])
 def review_case(request: Request, task_id: str) -> dict[str, Any]:
     return _service(request).get_case(task_id)
 
 
 @human_router.post("/{task_id}/claim")
-def claim_task(request: Request, task_id: str, payload: Optional[ClaimRequest] = None) -> dict[str, Any]:
-    reviewer_id = payload.reviewer_id if payload else "reviewer_demo"
-    return _service(request).claim_task(task_id, reviewer_id)
+def claim_task(
+    request: Request,
+    task_id: str,
+    user: Principal = Depends(require_permission("review.human.decide")),
+) -> dict[str, Any]:
+    # 审核员身份取自令牌，不再由客户端裸传。
+    return _service(request).claim_task(task_id, user.user_id)
 
 
 @human_router.post(
     "/{task_id}/decide", dependencies=[Depends(rate_limit("review.human.decide"))]
 )
-def decide_task(request: Request, task_id: str, payload: DecideRequest) -> dict[str, Any]:
-    return _service(request).decide_task(task_id, payload.model_dump())
+def decide_task(
+    request: Request,
+    task_id: str,
+    payload: DecideRequest,
+    user: Principal = Depends(require_permission("review.human.decide")),
+) -> dict[str, Any]:
+    body = payload.model_dump()
+    body["reviewer_id"] = user.user_id  # 令牌身份覆盖请求体
+    return _service(request).decide_task(task_id, body)
+
+
+# --- policy / 策略维度管理（Stage 4） ----------------------------------------
+
+@policy_router.get("/dimensions", dependencies=[Depends(require_permission("policy.read"))])
+def list_dimensions(request: Request) -> dict[str, Any]:
+    return _service(request).list_dimensions()
+
+
+@policy_router.post("/dimensions")
+def create_dimension(
+    request: Request,
+    payload: CreateDimensionRequest,
+    user: Principal = Depends(require_permission("policy.write")),
+) -> dict[str, Any]:
+    return _service(request).create_dimension(payload.model_dump(), user.user_id)
+
+
+@policy_router.patch("/dimensions/{dimension_id}")
+def update_dimension(
+    request: Request,
+    dimension_id: str,
+    payload: UpdateDimensionRequest,
+    user: Principal = Depends(require_permission("policy.write")),
+) -> dict[str, Any]:
+    return _service(request).update_dimension(dimension_id, payload.model_dump(), user.user_id)
+
+
+@policy_router.post("/dimensions/{dimension_id}/approve")
+def approve_dimension(
+    request: Request,
+    dimension_id: str,
+    user: Principal = Depends(require_permission("policy.approve")),
+) -> dict[str, Any]:
+    return _service(request).approve_dimension(dimension_id, user.user_id)
+
+
+@policy_router.post("/dimensions/{dimension_id}/transition")
+def transition_dimension(
+    request: Request,
+    dimension_id: str,
+    payload: TransitionRequest,
+    user: Principal = Depends(require_permission("policy.transition")),
+) -> dict[str, Any]:
+    return _service(request).transition_dimension(dimension_id, payload.target_status, user.user_id)
+
+
+@policy_router.post("/reload", dependencies=[Depends(require_permission("policy.transition"))])
+def reload_strategies(request: Request) -> dict[str, Any]:
+    return _service(request).reload_strategies()
+
+
+@policy_router.get("/versions", dependencies=[Depends(require_permission("policy.read"))])
+def list_policy_versions(request: Request) -> dict[str, Any]:
+    return _service(request).list_policy_versions()
+
+
+@policy_router.post("/versions")
+def create_policy_version(
+    request: Request,
+    payload: CreatePolicyVersionRequest,
+    user: Principal = Depends(require_permission("policy.write")),
+) -> dict[str, Any]:
+    return _service(request).create_policy_version(payload.model_dump(), user.user_id)
+
+
+@policy_router.post("/versions/{version_id}/activate")
+def activate_policy_version(
+    request: Request,
+    version_id: str,
+    user: Principal = Depends(require_permission("policy.transition")),
+) -> dict[str, Any]:
+    return _service(request).activate_policy_version(version_id, user.user_id)
 
 
 # --- dev ---------------------------------------------------------------------
@@ -177,12 +315,19 @@ def dev_seed(request: Request) -> dict[str, Any]:
     return _service(request).seed()
 
 
+@dev_router.post("/seed-users")
+def dev_seed_users(request: Request) -> dict[str, Any]:
+    return _service(request).seed_users()
+
+
 _ROUTERS = (
+    auth_router,
     system_router,
     ingestion_router,
     machine_router,
     evidence_router,
     human_router,
+    policy_router,
     dev_router,
 )
 

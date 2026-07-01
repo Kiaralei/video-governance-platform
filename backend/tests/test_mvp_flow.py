@@ -53,7 +53,12 @@ class MvpFlowTest(unittest.TestCase):
             self.assertEqual(machine_reviews["items"][0]["content_id"], queued["content_id"])
             machine_detail = service.get_machine_review(queued["content_id"])
             self.assertEqual(machine_detail["evidence"]["content_id"], queued["content_id"])
-            self.assertEqual(machine_detail["verdicts"][0]["dimension_id"], "mvp_general_policy")
+            # Stage 4：多维度机审 —— 通用维度 + 专项维度并行，取严链聚合。
+            dimension_ids = {v["dimension_id"] for v in machine_detail["verdicts"]}
+            self.assertIn("dim_general_policy", dimension_ids)
+            self.assertIn("dim_gambling", dimension_ids)
+            self.assertEqual(machine_detail["recommendation"], "pass")  # 中性做饭内容 -> AUTO_PASS
+            self.assertEqual(machine_detail["decision_summary"]["final_decision"], "auto_pass")
 
             claimed = service.claim_task(task_id, "reviewer_1")
             self.assertEqual(claimed["task"]["assigned_to"], "reviewer_1")
@@ -343,6 +348,90 @@ class MvpFlowTest(unittest.TestCase):
                 ]
             self.assertEqual(statuses[:10], [200] * 10)  # content.upload 限额 10/60s
             self.assertEqual(statuses[10], 429)
+
+    def test_auth_login_and_rbac(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from backend.app.api import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(db_path=Path(tmp) / "test.sqlite3")
+            with TestClient(app) as client:
+                client.post("/api/v1/dev/seed-users")
+
+                # 未认证访问受保护端点 -> 401
+                self.assertEqual(client.get("/api/v1/review/human/queue").status_code, 401)
+
+                # 错误密码 -> 401
+                bad = client.post(
+                    "/api/v1/auth/login", json={"username": "reviewer_demo", "password": "wrong"}
+                )
+                self.assertEqual(bad.status_code, 401)
+
+                # reviewer 登录
+                login = client.post(
+                    "/api/v1/auth/login", json={"username": "reviewer_demo", "password": "demo-pass"}
+                )
+                self.assertEqual(login.status_code, 200)
+                reviewer = {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+                # reviewer 可看人审队列，但无权看死信队列 -> 403
+                self.assertEqual(client.get("/api/v1/review/human/queue", headers=reviewer).status_code, 200)
+                self.assertEqual(client.get("/api/v1/system/dead-letters", headers=reviewer).status_code, 403)
+
+                # ops 登录：能看死信队列，但无权看人审队列 -> 403
+                ops_token = client.post(
+                    "/api/v1/auth/login", json={"username": "ops_demo", "password": "demo-pass"}
+                ).json()["access_token"]
+                ops = {"Authorization": f"Bearer {ops_token}"}
+                self.assertEqual(client.get("/api/v1/system/dead-letters", headers=ops).status_code, 200)
+                self.assertEqual(client.get("/api/v1/review/human/queue", headers=ops).status_code, 403)
+
+    def test_decide_uses_authenticated_reviewer(self) -> None:
+        from fastapi.testclient import TestClient
+
+        from backend.app.api import create_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(db_path=Path(tmp) / "test.sqlite3")
+            with TestClient(app) as client:
+                client.post("/api/v1/dev/seed-users")
+                token = client.post(
+                    "/api/v1/auth/login", json={"username": "reviewer_demo", "password": "demo-pass"}
+                ).json()["access_token"]
+                headers = {"Authorization": f"Bearer {token}"}
+                me = client.get("/api/v1/auth/me", headers=headers).json()
+
+                up = client.post(
+                    "/api/v1/content/upload",
+                    json={"title": "T", "description": "D", "creator_id": "c"},
+                ).json()
+                client.post("/api/v1/pipeline/drain", json={})
+                queue = client.get("/api/v1/review/human/queue", headers=headers).json()
+                self.assertEqual(queue["total"], 1)
+                task_id = queue["items"][0]["task_id"]
+
+                client.post(f"/api/v1/review/human/{task_id}/claim", headers=headers)
+                decided = client.post(
+                    f"/api/v1/review/human/{task_id}/decide",
+                    headers=headers,
+                    json={"decision": "pass", "reason": "ok"},
+                )
+                self.assertEqual(decided.status_code, 200)
+
+                # 审计里的 actor 应是登录用户的 user_id（来自令牌），而非客户端裸传值。
+                audit = client.get("/api/v1/audit", params={"content_id": up["content_id"]}).json()
+                decisions = [e for e in audit["items"] if e["action"] == "human_decision_submitted"]
+                self.assertEqual(len(decisions), 1)
+                self.assertEqual(decisions[0]["actor"], me["user_id"])
+
+    def test_password_hash_roundtrip(self) -> None:
+        from backend.app.auth import hash_password, verify_password
+
+        stored = hash_password("s3cret")
+        self.assertNotIn("s3cret", stored)  # 明文不落库
+        self.assertTrue(verify_password("s3cret", stored))
+        self.assertFalse(verify_password("wrong", stored))
 
     def test_circuit_breaker_opens_and_recovers(self) -> None:
         import fakeredis

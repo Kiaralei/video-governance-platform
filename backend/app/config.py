@@ -44,6 +44,11 @@ class Settings:
     celery_result_backend: str = os.environ.get(
         "CELERY_RESULT_BACKEND", os.environ.get("REDIS_URL", "")
     )
+    # JWT 认证。生产必须通过环境变量覆盖 JWT_SECRET。
+    jwt_secret: str = os.environ.get("JWT_SECRET", "dev-secret-change-me")
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_seconds: int = int(os.environ.get("VGP_ACCESS_TOKEN_TTL", str(60 * 60)))
+    refresh_token_ttl_seconds: int = int(os.environ.get("VGP_REFRESH_TOKEN_TTL", str(14 * 24 * 3600)))
 
 
 settings = Settings()

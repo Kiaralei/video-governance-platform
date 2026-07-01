@@ -52,3 +52,39 @@ class DecideRequest(BaseModel):
 
 class DrainRequest(BaseModel):
     limit: Optional[int] = Field(None, description="本次最多处理的流水线任务数，缺省处理全部积压")
+
+
+class CreateDimensionRequest(BaseModel):
+    """新增审核维度（Stage 4）。dimension_id 必须已有对应策略实现类。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    dimension_id: str = Field(..., description="维度 ID，如 dim_gambling")
+    dimension_name: str = Field(..., description="维度人读名称")
+    dimension_axis: str = Field("safety", description="safety / quality / business")
+    enabled: bool = Field(False, description="是否启用")
+    llm_review_enabled: bool = Field(True, description="是否触发 LLM 审查")
+    auto_block_threshold: float = Field(0.90, description="自动拦截置信度阈值")
+    human_review_threshold: float = Field(0.50, description="进人审置信度阈值")
+
+
+class UpdateDimensionRequest(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+class TransitionRequest(BaseModel):
+    target_status: str = Field(..., description="目标状态: draft/shadow/active/archived")
+
+
+class CreatePolicyVersionRequest(BaseModel):
+    title: str = Field(..., description="策略版本标题")
+    notes: str = Field("", description="备注")
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(..., description="用户名")
+    password: str = Field(..., description="密码")
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(..., description="refresh 令牌")

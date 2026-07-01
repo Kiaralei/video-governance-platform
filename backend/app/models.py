@@ -9,12 +9,23 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import BigInteger, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import BigInteger, Boolean, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    username: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    roles_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON 数组，如 ["reviewer_t1"]
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class ContentItem(Base):
@@ -95,9 +106,59 @@ class MachineReview(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
     verdicts_json: Mapped[str] = mapped_column(Text, nullable=False)
+    # Stage 4：规则引擎聚合的完整决策摘要（final_decision/risk_score/triggered_rules/...）。
+    decision_summary_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
     __table_args__ = (Index("idx_machine_reviews_content", "content_id"),)
+
+
+class DimensionRegistry(Base):
+    """维度注册表 —— 策略可扩展性核心。热加载配置 + 四态生命周期。"""
+
+    __tablename__ = "dimension_registry"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    dimension_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    dimension_name: Mapped[str] = mapped_column(String, nullable=False)
+    dimension_axis: Mapped[str] = mapped_column(String, nullable=False)  # safety/quality/business
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    llm_review_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    auto_block_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.90)
+    human_review_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.50)
+    prompt_template_id: Mapped[str] = mapped_column(String, nullable=False, default="")
+    severity_tiers: Mapped[str] = mapped_column(Text, nullable=False, default="{}")  # JSON
+    jurisdiction_overrides: Mapped[str] = mapped_column(Text, nullable=False, default="{}")  # JSON
+    sor_template_id: Mapped[str] = mapped_column(String, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="draft")  # 四态
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_by: Mapped[str] = mapped_column(String, nullable=False)
+    approved_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (Index("idx_dimension_registry_status", "status"),)
+
+
+class PolicyVersion(Base):
+    """策略版本快照 —— 提供 rule_version，同样走 draft→shadow→active→archived。"""
+
+    __tablename__ = "policy_versions"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    version_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="draft")
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_by: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    activated_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    __table_args__ = (Index("idx_policy_versions_status", "status"),)
 
 
 class HumanReviewTask(Base):
