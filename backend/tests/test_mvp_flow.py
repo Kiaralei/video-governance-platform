@@ -259,6 +259,58 @@ class MvpFlowTest(unittest.TestCase):
             self.assertEqual(evidence["video_meta"]["asset_status"], "remote_reference")
             self.assertEqual(evidence["modality_availability"]["video_source"]["mode"], "remote_reference")
 
+    def test_celery_chain_processes_pipeline_eagerly(self) -> None:
+        from backend.app import tasks as tasks_module
+
+        with tempfile.TemporaryDirectory() as tmp:
+            service = GovernanceService(Path(tmp) / "test.sqlite3")
+            tasks_module.set_service(service)
+            try:
+                queued = service.ingest_content(
+                    {
+                        "title": "Celery cooking clip",
+                        "description": "A normal recipe tutorial.",
+                        "creator_id": "creator_celery",
+                    }
+                )
+                # 无 broker：ingest 不派发，队列此刻应为空。
+                self.assertEqual(service.list_queue()["total"], 0)
+
+                # 通过 Celery chain（eager 同步）驱动整条流水线。
+                tasks_module.dispatch_pipeline(queued["job_id"])
+
+                self.assertEqual(service.list_queue()["total"], 1)
+                audit = service.get_audit(content_id=queued["content_id"])
+                self.assertEqual(
+                    [item["action"] for item in audit["items"]],
+                    [
+                        "content_queued",
+                        "pipeline_started",
+                        "evidence_extracted",
+                        "machine_review_completed",
+                        "human_review_task_created",
+                    ],
+                )
+            finally:
+                tasks_module.set_service(None)
+
+    def test_pipeline_failure_records_dead_letter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = GovernanceService(Path(tmp) / "test.sqlite3")
+            queued = service.ingest_content(
+                {"title": "Broken clip", "description": "Neutral content", "creator_id": "creator_x"}
+            )
+            with patch("backend.app.services.EvidenceExtractor") as extractor_cls:
+                extractor_cls.return_value.extract.side_effect = RuntimeError("extractor down")
+                service.drain_pipeline()
+
+            jobs = service.list_pipeline_jobs()
+            self.assertEqual(jobs["items"][0]["status"], "failed")
+            dead_letters = service.list_dead_letters()
+            self.assertEqual(dead_letters["total"], 1)
+            self.assertEqual(dead_letters["items"][0]["exception_type"], "RuntimeError")
+            self.assertEqual(dead_letters["items"][0]["content_id"], queued["content_id"])
+
     def test_llm_review_returns_none_without_api_key(self) -> None:
         with patch.dict(os.environ, {"LLM_API_KEY": "", "OPENAI_API_KEY": ""}):
             self.assertIsNone(review_with_configured_llm({"metadata": {"title": "Neutral"}}))

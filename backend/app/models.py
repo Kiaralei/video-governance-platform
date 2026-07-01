@@ -137,3 +137,23 @@ class AuditLog(Base):
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
     __table_args__ = (Index("idx_audit_logs_content_id", "content_id"),)
+
+
+class DeadLetterTask(Base):
+    __tablename__ = "dead_letter_tasks"
+
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True
+    )
+    task_name: Mapped[str] = mapped_column(String, nullable=False)
+    celery_task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    content_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    exception_type: Mapped[str] = mapped_column(String, nullable=False)
+    exception_message: Mapped[str] = mapped_column(Text, nullable=False)
+    traceback: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (Index("idx_dead_letter_tasks_status", "status"),)

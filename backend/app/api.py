@@ -72,6 +72,11 @@ def audit(request: Request, content_id: Optional[str] = None) -> dict[str, Any]:
     return _service(request).get_audit(content_id=content_id)
 
 
+@system_router.get("/system/dead-letters")
+def dead_letters(request: Request, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+    return _service(request).list_dead_letters(offset=offset, limit=limit)
+
+
 # --- ingestion / pipeline ----------------------------------------------------
 
 @ingestion_router.post("/content/upload")

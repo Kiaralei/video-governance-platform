@@ -38,6 +38,12 @@ class Settings:
     pipeline_poll_seconds: float = float(os.environ.get("VGP_PIPELINE_POLL_SECONDS", "0.5"))
     max_pipeline_backlog: int = int(os.environ.get("VGP_MAX_PIPELINE_BACKLOG", "1000"))
     max_batch_ingest_items: int = int(os.environ.get("VGP_MAX_BATCH_INGEST_ITEMS", "100"))
+    # Celery / Redis：配置 broker 则机审流水线走异步 chain；留空则退化为 drain / 线程 worker。
+    redis_url: str = os.environ.get("REDIS_URL", "")
+    celery_broker_url: str = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", ""))
+    celery_result_backend: str = os.environ.get(
+        "CELERY_RESULT_BACKEND", os.environ.get("REDIS_URL", "")
+    )
 
 
 settings = Settings()

@@ -26,7 +26,38 @@ $env:DATABASE_URL="postgresql://vgp:vgp_dev_password@127.0.0.1:5432/vgp"
 python backend/run.py
 ```
 
-打开 http://127.0.0.1:8000。PostgreSQL 模式会自动建表；未配置 `DATABASE_URL` 时服务会拒绝启动。
+打开 http://127.0.0.1:8000。交互式 API 文档在 http://127.0.0.1:8000/docs。
+PostgreSQL 模式会自动建表；未配置 `DATABASE_URL` 时服务会拒绝启动。
+
+## 数据库迁移（Alembic）
+
+结构由 `backend/app/models.py` 定义，变更走 Alembic：
+
+```powershell
+cd backend
+$env:DATABASE_URL="postgresql://vgp:vgp_dev_password@127.0.0.1:5432/vgp"
+python -m alembic upgrade head        # 应用迁移
+# 改了 models.py 后：
+python -m alembic revision --autogenerate -m "describe change"
+```
+
+## 异步流水线（Celery + Redis）
+
+机审流水线拆成一条独立可重试的 Celery chain：`extract_evidence -> run_machine_review`，
+每阶段幂等，重试耗尽写入死信队列（`GET /api/v1/system/dead-letters`）。
+
+- **未配置 broker**（默认）：Celery 处于 eager 模式，`ingest` 只入队，由 `drain` / 本地线程 worker 同步执行——无需 Redis，测试即走此路径。
+- **配置了 broker**：`ingest` 异步派发 chain，由独立 Celery worker 处理。
+
+```powershell
+docker compose -f docker-compose.postgres.yml up -d   # 含 postgres + redis
+$env:DATABASE_URL="postgresql://vgp:vgp_dev_password@127.0.0.1:5432/vgp"
+$env:REDIS_URL="redis://127.0.0.1:6379/0"
+# 终端 A：Celery worker
+cd backend; celery -A app.tasks worker -Q pipeline -l info
+# 终端 B：API
+python backend/run.py
+```
 
 ## 机审与证据提取
 

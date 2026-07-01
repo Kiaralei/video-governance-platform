@@ -17,6 +17,7 @@ from .llm_review import is_llm_configured, review_with_configured_llm
 from .models import (
     AuditLog,
     ContentItem,
+    DeadLetterTask,
     EvidencePackage,
     HumanReviewTask,
     MachineReview,
@@ -76,6 +77,7 @@ class GovernanceService:
         # 按外键依赖倒序删除，避免约束冲突。
         with self._session_factory.begin() as session:
             for model in (
+                DeadLetterTask,
                 AuditLog,
                 HumanReviewTask,
                 MachineReview,
@@ -174,7 +176,19 @@ class GovernanceService:
                 },
             )
 
+        self._dispatch_pipeline(job_id)
         return self.get_pipeline_job(job_id)
+
+    def _dispatch_pipeline(self, job_id: str) -> None:
+        """配置了 Celery broker 时派发异步 chain；否则不派发，交给 drain / 线程 worker。
+
+        测试与本地无 broker 环境下保持“先入队、后 drain”的语义不变。
+        """
+        if not settings.celery_broker_url:
+            return
+        from .tasks import dispatch_pipeline  # 延迟导入，避免与 tasks 循环依赖
+
+        dispatch_pipeline(job_id)
 
     def ingest_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
         items = payload.get("items")
@@ -322,33 +336,75 @@ class GovernanceService:
         return processed
 
     def _run_pipeline_job(self, job: dict[str, Any]) -> None:
+        """线程/drain 路径：调用方已领取任务，这里顺序执行两个阶段。
+
+        阶段方法是幂等的，与 Celery chain 复用同一套逻辑（见 app/tasks.py）。
+        """
+        self.extract_evidence_stage(job["id"])
+        self.run_machine_review_stage(job["id"])
+
+    def claim_pipeline_job(self, job_id: str) -> None:
+        """把指定 job 从 queued 领取为 processing（幂等：非 queued 直接跳过）。
+
+        线程路径在 process_next_pipeline_job 里用 SKIP LOCKED 原子领取；Celery 路径
+        每个 job 只派发一次，这里按 id 领取即可。
+        """
         timestamp = now_iso()
-        content_id = job["content_id"]
-        text_blob = f"{job['title']} {job['description']}".lower()
-        evidence_id = new_id("ep")
-        machine_review_id = new_id("mr")
-        task_id = new_id("task")
-        evidence = self._build_evidence_package(
-            evidence_id=evidence_id,
-            content_id=content_id,
-            title=job["title"],
-            description=job["description"],
-            creator_id=job["creator_id"],
-            poi=str(job.get("poi", "global") or "global"),
-            video_url=str(job.get("video_url", "") or ""),
-            text=text_blob,
-        )
-        machine = self._run_machine_review(machine_review_id, content_id, evidence, text_blob)
-
         with self._session_factory.begin() as session:
-            pipeline_job = session.get(PipelineJob, job["id"])
-            pipeline_job.stage = "machine_review"
-            pipeline_job.updated_at = timestamp
+            job = session.get(PipelineJob, job_id)
+            if job is None:
+                raise NotFoundError("流水线任务不存在")
+            if job.status != JOB_QUEUED:
+                return
+            job.status = JOB_PROCESSING
+            job.stage = "evidence_extraction"
+            job.attempts = job.attempts + 1
+            job.started_at = job.started_at or timestamp
+            job.updated_at = timestamp
+            job.error = None
+            content = session.get(ContentItem, job.content_id)
+            content.status = "machine_processing"
+            content.updated_at = timestamp
+            self._append_audit(
+                session,
+                content_id=job.content_id,
+                task_id=None,
+                actor="pipeline_worker",
+                action="pipeline_started",
+                detail={"job_id": job_id},
+            )
 
+    def extract_evidence_stage(self, job_id: str) -> None:
+        """阶段1：抽证据。幂等 —— 证据包已存在则直接返回，重试不会重复生成。"""
+        timestamp = now_iso()
+        with self._session_factory.begin() as session:
+            job = session.get(PipelineJob, job_id)
+            if job is None:
+                raise NotFoundError("流水线任务不存在")
+            content = session.get(ContentItem, job.content_id)
+            existing = session.execute(
+                select(EvidencePackage.id).where(EvidencePackage.content_id == job.content_id)
+            ).scalar()
+            if existing is not None:
+                return
+            evidence_id = new_id("ep")
+            text_blob = f"{content.title} {content.description}".lower()
+            evidence = self._build_evidence_package(
+                evidence_id=evidence_id,
+                content_id=job.content_id,
+                title=content.title,
+                description=content.description,
+                creator_id=content.creator_id,
+                poi=str(content.poi or "global"),
+                video_url=str(content.video_url or ""),
+                text=text_blob,
+            )
+            job.stage = "machine_review"
+            job.updated_at = timestamp
             session.add(
                 EvidencePackage(
                     id=evidence_id,
-                    content_id=content_id,
+                    content_id=job.content_id,
                     package_json=dumps(evidence),
                     created_at=timestamp,
                 )
@@ -356,22 +412,46 @@ class GovernanceService:
             self._persist_media_asset(session, evidence["media_asset"], timestamp)
             self._append_audit(
                 session,
-                content_id=content_id,
+                content_id=job.content_id,
                 task_id=None,
                 actor="pipeline_worker",
                 action="evidence_extracted",
                 detail={
-                    "job_id": job["id"],
+                    "job_id": job_id,
                     "evidence_package_id": evidence_id,
                     "media_asset_id": evidence["media_asset"]["asset_id"],
                     "media_asset_status": evidence["media_asset"]["status"],
                 },
             )
 
+    def run_machine_review_stage(self, job_id: str) -> None:
+        """阶段2：机审 + 入人审队列。幂等 —— 机审记录已存在则直接返回。"""
+        timestamp = now_iso()
+        with self._session_factory.begin() as session:
+            job = session.get(PipelineJob, job_id)
+            if job is None:
+                raise NotFoundError("流水线任务不存在")
+            content = session.get(ContentItem, job.content_id)
+            existing_review = session.execute(
+                select(MachineReview.id).where(MachineReview.content_id == job.content_id)
+            ).scalar()
+            if existing_review is not None:
+                return
+            evidence_row = session.execute(
+                select(EvidencePackage).where(EvidencePackage.content_id == job.content_id)
+            ).scalar_one()
+            evidence = loads(evidence_row.package_json)
+            text_blob = f"{content.title} {content.description}".lower()
+            machine_review_id = new_id("mr")
+            task_id = new_id("task")
+            machine = self._run_machine_review(machine_review_id, job.content_id, evidence, text_blob)
+            # _run_machine_review 会往 evidence 里补 llm_verdicts / machine_review_source，回写证据包。
+            evidence_row.package_json = dumps(evidence)
+
             session.add(
                 MachineReview(
                     id=machine["id"],
-                    content_id=content_id,
+                    content_id=job.content_id,
                     recommendation=machine["recommendation"],
                     confidence=machine["confidence"],
                     rationale=machine["rationale"],
@@ -381,12 +461,12 @@ class GovernanceService:
             )
             self._append_audit(
                 session,
-                content_id=content_id,
+                content_id=job.content_id,
                 task_id=None,
                 actor="pipeline_worker",
                 action="machine_review_completed",
                 detail={
-                    "job_id": job["id"],
+                    "job_id": job_id,
                     "machine_review_id": machine["id"],
                     "recommendation": machine["recommendation"],
                 },
@@ -395,8 +475,8 @@ class GovernanceService:
             session.add(
                 HumanReviewTask(
                     id=task_id,
-                    content_id=content_id,
-                    evidence_package_id=evidence_id,
+                    content_id=job.content_id,
+                    evidence_package_id=evidence_row.id,
                     status=PENDING,
                     assigned_to=None,
                     decision=None,
@@ -406,22 +486,20 @@ class GovernanceService:
                     updated_at=timestamp,
                 )
             )
-            pipeline_job.status = JOB_COMPLETED
-            pipeline_job.stage = "human_review_queued"
-            pipeline_job.updated_at = timestamp
-            pipeline_job.finished_at = timestamp
-
-            content = session.get(ContentItem, content_id)
+            job.status = JOB_COMPLETED
+            job.stage = "human_review_queued"
+            job.updated_at = timestamp
+            job.finished_at = timestamp
             content.status = "human_review"
             content.updated_at = timestamp
 
             self._append_audit(
                 session,
-                content_id=content_id,
+                content_id=job.content_id,
                 task_id=task_id,
                 actor="pipeline_worker",
                 action="human_review_task_created",
-                detail={"job_id": job["id"], "task_id": task_id},
+                detail={"job_id": job_id, "task_id": task_id},
             )
 
     def _mark_pipeline_failed(self, job_id: str, content_id: str, exc: Exception) -> None:
@@ -447,6 +525,22 @@ class GovernanceService:
                 actor="pipeline_worker",
                 action="pipeline_failed",
                 detail={"job_id": job_id, "error": str(exc)},
+            )
+
+            # 线程路径失败即终态（不重试），记入死信队列供运维排查/重放。
+            session.add(
+                DeadLetterTask(
+                    task_name="pipeline",
+                    celery_task_id=None,
+                    job_id=job_id,
+                    content_id=content_id,
+                    exception_type=type(exc).__name__,
+                    exception_message=str(exc),
+                    traceback="",
+                    retry_count=pipeline_job.attempts if pipeline_job is not None else 0,
+                    status="pending",
+                    created_at=timestamp,
+                )
             )
 
     def list_queue(self, offset: int = 0, limit: int = 20, status: str = PENDING) -> dict[str, Any]:
@@ -633,6 +727,64 @@ class GovernanceService:
                 detail={"decision": decision, "reason": reason},
             )
         return {"task_id": task_id, "status": DECIDED, "decision": decision}
+
+    def record_dead_letter(
+        self,
+        task_name: str,
+        celery_task_id: str | None,
+        job_id: str | None,
+        exc: Exception,
+        traceback_str: str = "",
+        retry_count: int = 0,
+    ) -> dict[str, Any]:
+        """记录一条死信（Celery 任务重试耗尽后调用）。"""
+        timestamp = now_iso()
+        content_id: str | None = None
+        with self._session_factory.begin() as session:
+            if job_id:
+                job = session.get(PipelineJob, job_id)
+                content_id = job.content_id if job is not None else None
+            session.add(
+                DeadLetterTask(
+                    task_name=task_name,
+                    celery_task_id=celery_task_id,
+                    job_id=job_id,
+                    content_id=content_id,
+                    exception_type=type(exc).__name__,
+                    exception_message=str(exc),
+                    traceback=traceback_str,
+                    retry_count=retry_count,
+                    status="pending",
+                    created_at=timestamp,
+                )
+            )
+        return {"status": "recorded"}
+
+    def list_dead_letters(self, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        offset = max(0, offset)
+        limit = min(max(1, limit), 100)
+        with self._session_factory() as session:
+            total = session.execute(select(func.count()).select_from(DeadLetterTask)).scalar_one()
+            rows = session.execute(
+                select(DeadLetterTask).order_by(DeadLetterTask.id.desc()).limit(limit).offset(offset)
+            ).scalars().all()
+        items = [self._dead_letter_summary(row) for row in rows]
+        next_offset = offset + limit if offset + limit < total else None
+        return {"items": items, "total": total, "offset": offset, "limit": limit, "next_offset": next_offset}
+
+    def _dead_letter_summary(self, row: DeadLetterTask) -> dict[str, Any]:
+        return {
+            "id": row.id,
+            "task_name": row.task_name,
+            "celery_task_id": row.celery_task_id,
+            "job_id": row.job_id,
+            "content_id": row.content_id,
+            "exception_type": row.exception_type,
+            "exception_message": row.exception_message,
+            "retry_count": row.retry_count,
+            "status": row.status,
+            "created_at": row.created_at,
+        }
 
     def get_audit(self, content_id: str | None = None) -> dict[str, Any]:
         with self._session_factory() as session:
