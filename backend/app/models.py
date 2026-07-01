@@ -192,6 +192,31 @@ class HumanReviewTask(Base):
     )
 
 
+class AppealCase(Base):
+    """申诉案件（Stage 7）。状态：open→in_review→overturned|rejected。"""
+
+    __tablename__ = "appeal_cases"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    content_id: Mapped[str] = mapped_column(String, ForeignKey("content_items.id"), nullable=False)
+    appellant_id: Mapped[str] = mapped_column(String, nullable=False)
+    appeal_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    original_decision: Mapped[str] = mapped_column(String, nullable=False)
+    original_reviewer_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    original_task_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    pre_disposition_snapshot: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="open")
+    assigned_reviewer_id: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    resolved_decision: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    resolution_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    sla_deadline: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    resolved_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    __table_args__ = (Index("idx_appeal_cases_status", "status"),)
+
+
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 

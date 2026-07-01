@@ -58,6 +58,16 @@ class NextTaskRequest(BaseModel):
     jurisdiction: Optional[str] = Field(None, description="按法域过滤（缺省不限）")
 
 
+class SubmitAppealRequest(BaseModel):
+    content_id: str = Field(..., description="被申诉内容 ID")
+    reason: str = Field(..., description="申诉理由")
+
+
+class DecideAppealRequest(BaseModel):
+    outcome: str = Field(..., description="裁决：overturn（改判）/ reject（维持）")
+    reason: str = Field(..., description="裁决理由")
+
+
 class CreateDimensionRequest(BaseModel):
     """新增审核维度（Stage 4）。dimension_id 必须已有对应策略实现类。"""
 

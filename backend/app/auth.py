@@ -45,6 +45,9 @@ ENDPOINT_PERMISSIONS: dict[str, set[Role]] = {
     "policy.write": {Role.POLICY_PM},
     "policy.approve": {Role.POLICY_APPROVER},
     "policy.transition": {Role.POLICY_PM, Role.OPS_ADMIN},
+    # Stage 7：申诉闭环。二审排除原审由服务层按账号 ID 强校验。
+    "appeal.read": {Role.APPEAL_REVIEWER, Role.REVIEWER_T3, Role.SENIOR_REVIEWER, Role.COMPLIANCE_AUDITOR},
+    "appeal.decide": {Role.APPEAL_REVIEWER, Role.REVIEWER_T3},
 }
 
 

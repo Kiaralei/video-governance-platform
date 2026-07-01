@@ -40,10 +40,12 @@ from .schemas import (
     CreateDimensionRequest,
     CreatePolicyVersionRequest,
     DecideRequest,
+    DecideAppealRequest,
     DrainRequest,
     LoginRequest,
     NextTaskRequest,
     RefreshRequest,
+    SubmitAppealRequest,
     TransitionRequest,
     UpdateDimensionRequest,
 )
@@ -85,6 +87,7 @@ machine_router = APIRouter(prefix="/api/v1", tags=["machine"])
 evidence_router = APIRouter(prefix="/api/v1", tags=["evidence"])
 human_router = APIRouter(prefix="/api/v1/review/human", tags=["human_review"])
 reviewers_router = APIRouter(prefix="/api/v1/reviewers", tags=["reviewers"])
+appeal_router = APIRouter(prefix="/api/v1/appeal", tags=["appeal"])
 policy_router = APIRouter(prefix="/api/v1/policy", tags=["policy"])
 dev_router = APIRouter(prefix="/api/v1/dev", tags=["dev"])
 
@@ -283,6 +286,47 @@ def reviewer_stats(
     return _service(request).reviewer_stats(reviewer_id)
 
 
+# --- appeal / 申诉闭环（Stage 7） --------------------------------------------
+
+@appeal_router.post("/submit")
+def submit_appeal(
+    request: Request,
+    payload: SubmitAppealRequest,
+    user: Principal = Depends(get_current_user),
+) -> dict[str, Any]:
+    # 申诉人身份取自令牌。
+    return _service(request).submit_appeal(payload.content_id, user.user_id, payload.reason)
+
+
+@appeal_router.get("", dependencies=[Depends(require_permission("appeal.read"))])
+def list_appeals(request: Request, status: Optional[str] = None, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+    return _service(request).list_appeals(status=status, offset=offset, limit=limit)
+
+
+@appeal_router.get("/{appeal_id}", dependencies=[Depends(require_permission("appeal.read"))])
+def get_appeal(request: Request, appeal_id: str) -> dict[str, Any]:
+    return _service(request).get_appeal(appeal_id)
+
+
+@appeal_router.post("/{appeal_id}/claim")
+def claim_appeal(
+    request: Request,
+    appeal_id: str,
+    user: Principal = Depends(require_permission("appeal.decide")),
+) -> dict[str, Any]:
+    return _service(request).assign_appeal(appeal_id, user.user_id)
+
+
+@appeal_router.post("/{appeal_id}/decide")
+def decide_appeal(
+    request: Request,
+    appeal_id: str,
+    payload: DecideAppealRequest,
+    user: Principal = Depends(require_permission("appeal.decide")),
+) -> dict[str, Any]:
+    return _service(request).decide_appeal(appeal_id, user.user_id, payload.outcome, payload.reason)
+
+
 # --- policy / 策略维度管理（Stage 4） ----------------------------------------
 
 @policy_router.get("/dimensions", dependencies=[Depends(require_permission("policy.read"))])
@@ -423,6 +467,7 @@ _ROUTERS = (
     evidence_router,
     human_router,
     reviewers_router,
+    appeal_router,
     policy_router,
     dev_router,
 )

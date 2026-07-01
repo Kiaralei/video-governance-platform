@@ -10,6 +10,12 @@ from uuid import uuid4
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
+from .appeals import (
+    APPEALABLE_DECISIONS,
+    OVERTURN_TARGET,
+    AppealStatus,
+    can_transition as appeal_can_transition,
+)
 from .config import settings
 from .database import create_db_engine, init_db, is_postgres_enabled, make_session_factory
 from .decision_engine import DecisionEngineService, StrategyRegistry
@@ -20,6 +26,7 @@ from .realtime import hub
 from .review_workflow import DECISION_PRIORITY, QueuePriority, ReviewStatus, can_transition
 from .auth import hash_password, verify_password
 from .models import (
+    AppealCase,
     AuditLog,
     ContentItem,
     DeadLetterTask,
@@ -102,6 +109,7 @@ class GovernanceService:
             for model in (
                 DeadLetterTask,
                 AuditLog,
+                AppealCase,
                 HumanReviewTask,
                 MachineReview,
                 EvidencePackage,
@@ -1080,6 +1088,217 @@ class GovernanceService:
             "created_at": row.created_at,
         }
 
+    # --- Stage 7：申诉闭环 ---------------------------------------------------
+
+    def submit_appeal(self, content_id: str, appellant_id: str, reason: str) -> dict[str, Any]:
+        """提交申诉。仅对 BLOCK 处置可申诉（申诉通道不可加重到 BLOCK）。"""
+        appellant_id = appellant_id.strip() or "appellant"
+        reason = reason.strip()
+        if not reason:
+            raise ValidationError("申诉理由不能为空")
+        appeal_id = new_id("appeal")
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
+        with self._session_factory.begin() as session:
+            # 锁内容行：串行化同一内容的并发申诉提交，避免重复活动申诉（会导致恢复连锁重复触发）。
+            content = session.get(ContentItem, content_id, with_for_update=True)
+            if content is None:
+                raise NotFoundError("内容不存在")
+            if content.final_decision not in APPEALABLE_DECISIONS:
+                raise ConflictError("仅对已 BLOCK 的内容可发起申诉")
+            # 一个内容同一时刻只允许一个进行中的申诉。
+            open_exists = session.execute(
+                select(AppealCase.id).where(
+                    AppealCase.content_id == content_id,
+                    AppealCase.status.in_([AppealStatus.OPEN.value, AppealStatus.IN_REVIEW.value]),
+                )
+            ).scalar()
+            if open_exists is not None:
+                raise ConflictError("该内容已有进行中的申诉")
+            # 取原裁定任务，锁定原审核员用于独立性排除。
+            task = session.execute(
+                select(HumanReviewTask)
+                .where(HumanReviewTask.content_id == content_id, HumanReviewTask.status == DECIDED)
+                .order_by(HumanReviewTask.decided_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            original_reviewer = task.assigned_to if task else None
+            original_task_id = task.id if task else None
+            snapshot = {
+                "content_status": content.status,
+                "final_decision": content.final_decision,
+            }
+            session.add(
+                AppealCase(
+                    id=appeal_id,
+                    content_id=content_id,
+                    appellant_id=appellant_id,
+                    appeal_reason=reason,
+                    original_decision=content.final_decision,
+                    original_reviewer_id=original_reviewer,
+                    original_task_id=original_task_id,
+                    pre_disposition_snapshot=dumps(snapshot),
+                    status=AppealStatus.OPEN.value,
+                    assigned_reviewer_id=None,
+                    resolved_decision=None,
+                    resolution_reason=None,
+                    sla_deadline=(now + timedelta(seconds=settings.sla_default_seconds)).isoformat(),
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    resolved_at=None,
+                )
+            )
+            self._append_audit(
+                session, content_id=content_id, task_id=None, actor=appellant_id,
+                action="appeal_submitted",
+                detail={"appeal_id": appeal_id, "original_decision": content.final_decision},
+            )
+        return {"appeal_id": appeal_id, "status": AppealStatus.OPEN.value}
+
+    def list_appeals(self, status: str | None = None, offset: int = 0, limit: int = 50) -> dict[str, Any]:
+        offset = max(0, offset)
+        limit = min(max(1, limit), 100)
+        with self._session_factory() as session:
+            stmt = select(AppealCase)
+            count_stmt = select(func.count()).select_from(AppealCase)
+            if status:
+                stmt = stmt.where(AppealCase.status == status)
+                count_stmt = count_stmt.where(AppealCase.status == status)
+            total = session.execute(count_stmt).scalar_one()
+            rows = session.execute(
+                stmt.order_by(AppealCase.created_at.asc()).limit(limit).offset(offset)
+            ).scalars().all()
+        return {"items": [self._appeal_summary(r) for r in rows], "total": total, "offset": offset, "limit": limit}
+
+    def get_appeal(self, appeal_id: str) -> dict[str, Any]:
+        with self._session_factory() as session:
+            appeal = session.get(AppealCase, appeal_id)
+            if appeal is None:
+                raise NotFoundError("申诉不存在")
+            return self._appeal_summary(appeal)
+
+    def assign_appeal(self, appeal_id: str, reviewer_id: str) -> dict[str, Any]:
+        """二审领取。独立性：二审员不能是原审核员。open→in_review。"""
+        reviewer_id = reviewer_id.strip()
+        timestamp = now_iso()
+        with self._session_factory.begin() as session:
+            appeal = session.get(AppealCase, appeal_id, with_for_update=True)
+            if appeal is None:
+                raise NotFoundError("申诉不存在")
+            if not appeal_can_transition(appeal.status, AppealStatus.IN_REVIEW.value):
+                raise ConflictError(f"申诉状态 {appeal.status} 不可领取")
+            if appeal.original_reviewer_id and reviewer_id == appeal.original_reviewer_id:
+                raise ConflictError("独立性约束：二审员不能是原审核员")
+            if reviewer_id == appeal.appellant_id:
+                raise ConflictError("独立性约束：申诉人不能自审自批")
+            appeal.assigned_reviewer_id = reviewer_id
+            appeal.status = AppealStatus.IN_REVIEW.value
+            appeal.updated_at = timestamp
+            self._append_audit(
+                session, content_id=appeal.content_id, task_id=None, actor=reviewer_id,
+                action="appeal_claimed", detail={"appeal_id": appeal_id},
+            )
+        return self.get_appeal(appeal_id)
+
+    def decide_appeal(
+        self, appeal_id: str, reviewer_id: str, outcome: str, reason: str
+    ) -> dict[str, Any]:
+        """二审裁决。outcome ∈ {overturn, reject}。改判触发恢复连锁四链。"""
+        reviewer_id = reviewer_id.strip()
+        outcome = str(outcome).lower().strip()
+        reason = str(reason).strip()
+        if outcome not in {"overturn", "reject"}:
+            raise ValidationError("outcome 只能是 overturn 或 reject")
+        if not reason:
+            raise ValidationError("裁决理由不能为空")
+        target_status = (
+            AppealStatus.OVERTURNED.value if outcome == "overturn" else AppealStatus.REJECTED.value
+        )
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
+        recovery: dict[str, Any] = {}
+        content_id: str | None = None
+        with self._session_factory.begin() as session:
+            appeal = session.get(AppealCase, appeal_id, with_for_update=True)
+            if appeal is None:
+                raise NotFoundError("申诉不存在")
+            if not appeal_can_transition(appeal.status, target_status):
+                raise ConflictError(f"申诉状态 {appeal.status} 不可裁决为 {target_status}")
+            # 独立性：二审员必须与原审核员、申诉人都不同，且应为领取该申诉的人。
+            if appeal.original_reviewer_id and reviewer_id == appeal.original_reviewer_id:
+                raise ConflictError("独立性约束：二审员不能是原审核员")
+            if reviewer_id == appeal.appellant_id:
+                raise ConflictError("独立性约束：申诉人不能自审自批")
+            if appeal.assigned_reviewer_id and appeal.assigned_reviewer_id != reviewer_id:
+                raise ConflictError("只有领取该申诉的二审员可裁决")
+            content_id = appeal.content_id
+            appeal.status = target_status
+            appeal.resolution_reason = reason
+            appeal.updated_at = timestamp
+            appeal.resolved_at = timestamp
+
+            if outcome == "overturn":
+                # 硬约束：不可加重 —— 只允许 block -> pass。
+                new_decision = OVERTURN_TARGET.get(appeal.original_decision)
+                if new_decision is None:
+                    raise ConflictError("该原处置不支持在申诉通道内改判（不可加重处置）")
+                appeal.resolved_decision = new_decision
+                content = session.get(ContentItem, content_id)
+                # 恢复连锁 ①恢复可见性：内容处置回滚到较轻处置。
+                content.final_decision = new_decision
+                content.status = f"final_{new_decision}"
+                content.updated_at = timestamp
+                self._append_audit(
+                    session, content_id=content_id, task_id=None, actor=reviewer_id,
+                    action="appeal_overturned",
+                    detail={"appeal_id": appeal_id, "from": appeal.original_decision, "to": new_decision, "reason": reason},
+                )
+                # 恢复连锁 ②账号处罚回滚 ③质检负反馈 ④改判样本回流（Stage 8 消费）。
+                for chain_action, chain_detail in (
+                    ("visibility_restored", {"final_decision": new_decision}),
+                    ("penalty_rolled_back", {"creator_id": content.creator_id}),
+                    ("qa_negative_feedback", {"original_reviewer_id": appeal.original_reviewer_id}),
+                    ("correction_sample_queued", {"content_id": content_id, "corrected_to": new_decision}),
+                ):
+                    self._append_audit(
+                        session, content_id=content_id, task_id=None, actor="system",
+                        action=chain_action, detail={"appeal_id": appeal_id, **chain_detail},
+                    )
+                recovery = {
+                    "visibility_restored": True,
+                    "penalty_rolled_back": True,
+                    "qa_negative_feedback": True,
+                    "correction_sample_queued": True,
+                    "new_decision": new_decision,
+                }
+            else:
+                appeal.resolved_decision = appeal.original_decision  # 维持
+                self._append_audit(
+                    session, content_id=content_id, task_id=None, actor=reviewer_id,
+                    action="appeal_rejected", detail={"appeal_id": appeal_id, "reason": reason},
+                )
+        # 恢复连锁事件广播（异步最终一致的占位：这里直接推 WS）。
+        if outcome == "overturn":
+            hub.publish_to_role("compliance_auditor", "appeal_overturned", {"appeal_id": appeal_id, "content_id": content_id})
+        return {"appeal_id": appeal_id, "status": target_status, "outcome": outcome, "recovery_chain": recovery}
+
+    def _appeal_summary(self, appeal: AppealCase) -> dict[str, Any]:
+        return {
+            "appeal_id": appeal.id,
+            "content_id": appeal.content_id,
+            "appellant_id": appeal.appellant_id,
+            "appeal_reason": appeal.appeal_reason,
+            "original_decision": appeal.original_decision,
+            "original_reviewer_id": appeal.original_reviewer_id,
+            "status": appeal.status,
+            "assigned_reviewer_id": appeal.assigned_reviewer_id,
+            "resolved_decision": appeal.resolved_decision,
+            "resolution_reason": appeal.resolution_reason,
+            "sla_deadline": appeal.sla_deadline,
+            "created_at": appeal.created_at,
+            "resolved_at": appeal.resolved_at,
+        }
+
     # --- Stage 4：策略注册表 + 决策引擎 --------------------------------------
 
     def reload_strategies(self) -> dict[str, Any]:
@@ -1432,6 +1651,7 @@ class GovernanceService:
             ("ops_demo", ["ops_admin"]),
             ("policy_pm_demo", ["policy_pm"]),
             ("policy_approver_demo", ["policy_approver"]),
+            ("appeal_demo", ["appeal_reviewer"]),
         ]
         created: list[dict[str, Any]] = []
         for username, roles in demo:
