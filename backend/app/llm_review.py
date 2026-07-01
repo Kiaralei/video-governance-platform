@@ -5,21 +5,43 @@ import os
 import re
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, Optional
 
+from .circuit_breaker import CircuitBreaker, CircuitOpenError
 
 VALID_DECISIONS = {"VIOLATION", "NO_VIOLATION", "UNCERTAIN"}
+
+_breaker: Optional[CircuitBreaker] = None
+
+
+def _default_breaker() -> CircuitBreaker:
+    global _breaker
+    if _breaker is None:
+        from .redis_client import get_redis
+
+        _breaker = CircuitBreaker(
+            get_redis(),
+            name="llm_review",
+            failure_rate_threshold=0.5,
+            minimum_calls=5,
+            window_seconds=60,
+            recovery_timeout=60,
+        )
+    return _breaker
 
 
 def is_llm_configured() -> bool:
     return bool(_api_key())
 
 
-def review_with_configured_llm(evidence: dict[str, Any]) -> dict[str, Any] | None:
+def review_with_configured_llm(
+    evidence: dict[str, Any], breaker: Optional[CircuitBreaker] = None
+) -> dict[str, Any] | None:
     api_key = _api_key()
     if not api_key:
         return None
 
+    breaker = breaker if breaker is not None else _default_breaker()
     endpoint = _chat_endpoint()
     model = os.environ.get("LLM_MODEL", os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
     timeout = float(os.environ.get("LLM_TIMEOUT_SECONDS", "30"))
@@ -49,9 +71,15 @@ def review_with_configured_llm(evidence: dict[str, Any]) -> dict[str, Any] | Non
         method="POST",
     )
 
-    try:
+    def _do_request() -> str:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
+            return response.read().decode("utf-8")
+
+    try:
+        # 熔断器包裹网络调用：连续失败达阈值后直接短路，跳过网络、回退本地规则。
+        raw = breaker.call(_do_request)
+    except CircuitOpenError:
+        return None
     except (urllib.error.URLError, TimeoutError, OSError, ValueError):
         return None
 

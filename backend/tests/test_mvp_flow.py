@@ -344,6 +344,84 @@ class MvpFlowTest(unittest.TestCase):
             self.assertEqual(statuses[:10], [200] * 10)  # content.upload 限额 10/60s
             self.assertEqual(statuses[10], 429)
 
+    def test_circuit_breaker_opens_and_recovers(self) -> None:
+        import fakeredis
+
+        from backend.app.circuit_breaker import CircuitBreaker
+
+        clock = {"t": 1000.0}
+        breaker = CircuitBreaker(
+            fakeredis.FakeStrictRedis(decode_responses=True),
+            name="t",
+            failure_rate_threshold=0.5,
+            minimum_calls=4,
+            window_seconds=60,
+            recovery_timeout=30,
+            time_fn=lambda: clock["t"],
+        )
+        for _ in range(3):  # 未达 minimum_calls：保持闭合
+            breaker.record_failure()
+        self.assertTrue(breaker.allow())
+        breaker.record_failure()  # 达到最小样本且失败率超阈值 -> 打开
+        self.assertFalse(breaker.allow())
+        clock["t"] += 10  # 未到恢复期仍打开
+        self.assertFalse(breaker.allow())
+        clock["t"] += 30  # 到恢复期 -> 半开放行一次试探
+        self.assertTrue(breaker.allow())
+        breaker.record_success()  # 试探成功 -> 闭合
+        self.assertEqual(breaker.state(), "closed")
+
+    def test_circuit_breaker_call_wraps_failures(self) -> None:
+        import fakeredis
+
+        from backend.app.circuit_breaker import CircuitBreaker, CircuitOpenError
+
+        breaker = CircuitBreaker(
+            fakeredis.FakeStrictRedis(decode_responses=True),
+            name="call",
+            failure_rate_threshold=0.5,
+            minimum_calls=3,
+            window_seconds=60,
+            recovery_timeout=60,
+        )
+
+        def boom():
+            raise TimeoutError("down")
+
+        for _ in range(3):
+            with self.assertRaises(TimeoutError):
+                breaker.call(boom)
+        with self.assertRaises(CircuitOpenError):  # 打开后直接短路
+            breaker.call(lambda: "ok")
+        self.assertTrue(CircuitBreaker(None).allow())  # 无 Redis -> 恒放行
+
+    def test_llm_review_failures_open_breaker(self) -> None:
+        import fakeredis
+
+        from backend.app.circuit_breaker import CircuitBreaker
+        from backend.app.llm_review import review_with_configured_llm
+
+        breaker = CircuitBreaker(
+            fakeredis.FakeStrictRedis(decode_responses=True),
+            name="llm_it",
+            failure_rate_threshold=0.5,
+            minimum_calls=2,
+            window_seconds=60,
+            recovery_timeout=60,
+        )
+        env = {
+            "LLM_API_KEY": "test-key",
+            "OPENAI_API_KEY": "test-key",
+            "LLM_BASE_URL": "http://127.0.0.1:1/v1",  # 连接立即被拒
+            "LLM_TIMEOUT_SECONDS": "1",
+        }
+        with patch.dict(os.environ, env):
+            for _ in range(2):
+                self.assertIsNone(review_with_configured_llm({"metadata": {}}, breaker=breaker))
+            self.assertFalse(breaker.allow())  # 连续失败 -> 打开
+            # 打开后直接短路返回 None（不再发网络）
+            self.assertIsNone(review_with_configured_llm({"metadata": {}}, breaker=breaker))
+
     def test_llm_review_returns_none_without_api_key(self) -> None:
         with patch.dict(os.environ, {"LLM_API_KEY": "", "OPENAI_API_KEY": ""}):
             self.assertIsNone(review_with_configured_llm({"metadata": {"title": "Neutral"}}))
