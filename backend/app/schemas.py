@@ -54,6 +54,10 @@ class DrainRequest(BaseModel):
     limit: Optional[int] = Field(None, description="本次最多处理的流水线任务数，缺省处理全部积压")
 
 
+class NextTaskRequest(BaseModel):
+    jurisdiction: Optional[str] = Field(None, description="按法域过滤（缺省不限）")
+
+
 class CreateDimensionRequest(BaseModel):
     """新增审核维度（Stage 4）。dimension_id 必须已有对应策略实现类。"""
 

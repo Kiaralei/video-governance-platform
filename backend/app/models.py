@@ -179,10 +179,17 @@ class HumanReviewTask(Base):
     lock_expires_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     sla_deadline: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     sla_warned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Stage 6：优先级队列 + 反疲劳 + 独立性。
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    is_sensitive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    jurisdiction: Mapped[str] = mapped_column(String, nullable=False, default="global")
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
 
-    __table_args__ = (Index("idx_human_review_tasks_status_created", "status", "created_at"),)
+    __table_args__ = (
+        Index("idx_human_review_tasks_status_created", "status", "created_at"),
+        Index("idx_human_review_tasks_queue", "status", "priority", "sla_deadline", "created_at"),
+    )
 
 
 class AuditLog(Base):

@@ -42,6 +42,7 @@ from .schemas import (
     DecideRequest,
     DrainRequest,
     LoginRequest,
+    NextTaskRequest,
     RefreshRequest,
     TransitionRequest,
     UpdateDimensionRequest,
@@ -83,6 +84,7 @@ ingestion_router = APIRouter(prefix="/api/v1", tags=["ingestion"])
 machine_router = APIRouter(prefix="/api/v1", tags=["machine"])
 evidence_router = APIRouter(prefix="/api/v1", tags=["evidence"])
 human_router = APIRouter(prefix="/api/v1/review/human", tags=["human_review"])
+reviewers_router = APIRouter(prefix="/api/v1/reviewers", tags=["reviewers"])
 policy_router = APIRouter(prefix="/api/v1/policy", tags=["policy"])
 dev_router = APIRouter(prefix="/api/v1/dev", tags=["dev"])
 
@@ -212,6 +214,17 @@ def review_queue(
     return _service(request).list_queue(offset=offset, limit=limit, status=status)
 
 
+@human_router.post("/next")
+def next_task(
+    request: Request,
+    payload: Optional[NextTaskRequest] = None,
+    user: Principal = Depends(require_permission("review.human.decide")),
+) -> dict[str, Any]:
+    """按优先级原子领取下一个待审案件（含独立性 + 反疲劳约束）。"""
+    jurisdiction = payload.jurisdiction if payload else None
+    return _service(request).fetch_next(user.user_id, jurisdiction=jurisdiction)
+
+
 @human_router.get("/{task_id}", dependencies=[Depends(require_permission("review.human.queue"))])
 def review_case(request: Request, task_id: str) -> dict[str, Any]:
     return _service(request).get_case(task_id)
@@ -257,6 +270,17 @@ def release_task(
     user: Principal = Depends(require_permission("review.human.decide")),
 ) -> dict[str, Any]:
     return _service(request).release_task(task_id, user.user_id)
+
+
+# --- reviewers（Stage 6） -----------------------------------------------------
+
+@reviewers_router.get("/{reviewer_id}/stats")
+def reviewer_stats(
+    request: Request,
+    reviewer_id: str,
+    user: Principal = Depends(require_permission("review.human.queue")),
+) -> dict[str, Any]:
+    return _service(request).reviewer_stats(reviewer_id)
 
 
 # --- policy / 策略维度管理（Stage 4） ----------------------------------------
@@ -398,6 +422,7 @@ _ROUTERS = (
     machine_router,
     evidence_router,
     human_router,
+    reviewers_router,
     policy_router,
     dev_router,
 )

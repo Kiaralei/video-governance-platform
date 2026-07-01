@@ -17,6 +17,7 @@ from .decision_engine.types import VALID_STATUS_TRANSITIONS, DimensionStatus
 from .evidence import EvidenceExtractor
 from .llm_review import is_llm_configured
 from .realtime import hub
+from .review_workflow import DECISION_PRIORITY, QueuePriority, ReviewStatus, can_transition
 from .auth import hash_password, verify_password
 from .models import (
     AuditLog,
@@ -502,6 +503,12 @@ class GovernanceService:
             sla_deadline = (
                 _parse_iso(timestamp) + timedelta(seconds=settings.sla_default_seconds)
             ).isoformat()
+            summary = machine["decision_summary"]
+            final_decision = summary.get("final_decision", "needs_human_review")
+            priority = DECISION_PRIORITY.get(final_decision, QueuePriority.NORMAL.value)
+            is_sensitive = final_decision == "critical_escalate" or any(
+                v.get("severity_suggestion") == "critical" for v in machine["verdicts"]
+            )
             session.add(
                 HumanReviewTask(
                     id=task_id,
@@ -516,6 +523,9 @@ class GovernanceService:
                     lock_expires_at=None,
                     sla_deadline=sla_deadline,
                     sla_warned=False,
+                    priority=priority,
+                    is_sensitive=is_sensitive,
+                    jurisdiction=str(content.jurisdiction or "global"),
                     created_at=timestamp,
                     updated_at=timestamp,
                 )
@@ -595,7 +605,10 @@ class GovernanceService:
                     JOIN content_items c ON c.id = t.content_id
                     JOIN machine_reviews m ON m.content_id = c.id
                     WHERE t.status = :status
-                    ORDER BY t.created_at ASC
+                    ORDER BY t.priority ASC,
+                             CASE WHEN t.sla_deadline IS NULL THEN 1 ELSE 0 END ASC,
+                             t.sla_deadline ASC,
+                             t.created_at ASC
                     LIMIT :limit OFFSET :offset
                     """
                 ),
@@ -721,6 +734,7 @@ class GovernanceService:
                 raise ConflictError(f"案件已被 {task.assigned_to} 锁定")
             prev_holder = task.assigned_to if task.assigned_to != reviewer_id else None
             task.assigned_to = reviewer_id
+            task.status = ReviewStatus.IN_REVIEW.value  # pending/in_review -> in_review
             task.locked_at = timestamp
             task.lock_expires_at = (
                 now + timedelta(seconds=settings.case_lock_ttl_seconds)
@@ -768,9 +782,12 @@ class GovernanceService:
             task = session.get(HumanReviewTask, task_id, with_for_update=True)
             if task is None:
                 raise NotFoundError("任务不存在")
+            if task.status == DECIDED:
+                raise ConflictError("任务已完成裁定，不能释放")  # 禁止 decided->pending 复活
             if task.assigned_to != reviewer_id:
                 raise ConflictError("只有持锁人可以释放")
             task.assigned_to = None
+            task.status = ReviewStatus.PENDING.value  # 回到待分配
             task.locked_at = None
             task.lock_expires_at = None
             task.updated_at = timestamp
@@ -788,13 +805,14 @@ class GovernanceService:
         warnings: list[tuple[str, str, str]] = []
         with self._session_factory.begin() as session:
             rows = session.execute(
-                select(HumanReviewTask).where(HumanReviewTask.status == PENDING)
+                select(HumanReviewTask).where(HumanReviewTask.status != DECIDED)
             ).scalars().all()
             for task in rows:
                 lock_expiry = _parse_iso(task.lock_expires_at)
                 if task.assigned_to and lock_expiry is not None and lock_expiry <= now:
                     holder = task.assigned_to
                     task.assigned_to = None
+                    task.status = ReviewStatus.PENDING.value  # 超时释放回待分配
                     task.locked_at = None
                     task.lock_expires_at = None
                     task.updated_at = now.isoformat()
@@ -812,6 +830,142 @@ class GovernanceService:
                 hub.publish_to_user(holder, "sla_warning", payload)
             hub.publish_to_role("senior_reviewer", "sla_warning", payload)
         return {"expired_locks": len(expired), "sla_warnings": len(warnings)}
+
+    # --- Stage 6：优先级队列 + 分配 + 反疲劳 + 独立性 -------------------------
+
+    def fetch_next(
+        self, reviewer_id: str, jurisdiction: str | None = None
+    ) -> dict[str, Any]:
+        """领取下一个待审案件。优先级 (priority, sla_deadline, created_at) 三级排序，
+        原子领取（Postgres FOR UPDATE SKIP LOCKED），并施加独立性 + 反疲劳约束。"""
+        reviewer_id = reviewer_id.strip()
+        if not reviewer_id:
+            raise ValidationError("reviewer_id 不能为空")
+        now = datetime.now(timezone.utc)
+        now_iso_str = now.isoformat()
+
+        # 反疲劳：强制休息 —— 近 1 小时裁定量超阈值则暂不派单。
+        recent = self._recent_decision_count(reviewer_id, settings.forced_break_window_seconds, now)
+        if recent >= settings.forced_break_after:
+            hub.publish_to_user(reviewer_id, "break_reminder", {"decided_recent": recent})
+            return {"task": None, "status": "break_required", "decided_recent": recent}
+
+        over_csam = self._csam_over_limit(reviewer_id, now)
+        lock_clause = " FOR UPDATE SKIP LOCKED" if is_postgres_enabled() else ""
+
+        params: dict[str, Any] = {"reviewer_id": reviewer_id, "now": now_iso_str}
+        clauses = [
+            "t.status <> 'decided'",
+            "(t.assigned_to IS NULL OR t.lock_expires_at < :now)",
+            # 独立性：排除该审核员已裁定过的同一 content（申诉二审排除原审核员）。
+            "NOT EXISTS (SELECT 1 FROM human_review_tasks p "
+            "WHERE p.content_id = t.content_id AND p.assigned_to = :reviewer_id "
+            "AND p.status = 'decided')",
+        ]
+        if jurisdiction:
+            clauses.append("t.jurisdiction = :jurisdiction")
+            params["jurisdiction"] = jurisdiction
+        if over_csam:
+            # 反疲劳：CSAM/敏感曝光超限 -> 只派非敏感任务。
+            # 用绑定参数传布尔，避免 "is_sensitive = 0" 在 Postgres 上 boolean=integer 报错。
+            clauses.append("t.is_sensitive = :not_sensitive")
+            params["not_sensitive"] = False
+        where = " AND ".join(clauses)
+
+        with self._session_factory.begin() as session:
+            row = session.execute(
+                text(
+                    f"""
+                    SELECT t.id
+                    FROM human_review_tasks t
+                    WHERE {where}
+                    ORDER BY t.priority ASC,
+                             CASE WHEN t.sla_deadline IS NULL THEN 1 ELSE 0 END ASC,
+                             t.sla_deadline ASC,
+                             t.created_at ASC
+                    LIMIT 1
+                    {lock_clause}
+                    """
+                ),
+                params,
+            ).mappings().first()
+            if row is None:
+                return {"task": None, "status": "empty"}
+            task = session.get(HumanReviewTask, row["id"])
+            task.assigned_to = reviewer_id
+            task.status = ReviewStatus.IN_REVIEW.value
+            task.locked_at = now_iso_str
+            task.lock_expires_at = (
+                now + timedelta(seconds=settings.case_lock_ttl_seconds)
+            ).isoformat()
+            task.updated_at = now_iso_str
+            task_id = task.id
+            self._append_audit(
+                session, content_id=task.content_id, task_id=task_id, actor=reviewer_id,
+                action="task_assigned", detail={"reviewer_id": reviewer_id, "priority": task.priority},
+            )
+            lock_expires_at = task.lock_expires_at
+        hub.publish_to_user(reviewer_id, "task_lock_renewed", {"task_id": task_id, "lock_expires_at": lock_expires_at})
+        return {"status": "assigned", **self.get_case(task_id)}
+
+    def _recent_decision_count(self, reviewer_id: str, window_seconds: int, now: datetime) -> int:
+        cutoff = (now - timedelta(seconds=window_seconds)).isoformat()
+        with self._session_factory() as session:
+            return session.execute(
+                select(func.count())
+                .select_from(HumanReviewTask)
+                .where(
+                    HumanReviewTask.assigned_to == reviewer_id,
+                    HumanReviewTask.status == DECIDED,
+                    HumanReviewTask.decided_at >= cutoff,
+                )
+            ).scalar_one()
+
+    def _csam_exposure_count(self, reviewer_id: str, window_seconds: int, now: datetime) -> int:
+        cutoff = (now - timedelta(seconds=window_seconds)).isoformat()
+        with self._session_factory() as session:
+            return session.execute(
+                select(func.count())
+                .select_from(HumanReviewTask)
+                .where(
+                    HumanReviewTask.assigned_to == reviewer_id,
+                    HumanReviewTask.status == DECIDED,
+                    HumanReviewTask.is_sensitive.is_(True),
+                    HumanReviewTask.decided_at >= cutoff,
+                )
+            ).scalar_one()
+
+    def _csam_over_limit(self, reviewer_id: str, now: datetime) -> bool:
+        shift = self._csam_exposure_count(reviewer_id, settings.shift_window_seconds, now)
+        if shift >= settings.csam_per_shift_limit:
+            return True
+        week = self._csam_exposure_count(reviewer_id, settings.week_window_seconds, now)
+        return week >= settings.csam_per_week_limit
+
+    def reviewer_stats(self, reviewer_id: str) -> dict[str, Any]:
+        now = datetime.now(timezone.utc)
+        with self._session_factory() as session:
+            total_decided = session.execute(
+                select(func.count()).select_from(HumanReviewTask).where(
+                    HumanReviewTask.assigned_to == reviewer_id, HumanReviewTask.status == DECIDED
+                )
+            ).scalar_one()
+            in_progress = session.execute(
+                select(func.count()).select_from(HumanReviewTask).where(
+                    HumanReviewTask.assigned_to == reviewer_id,
+                    HumanReviewTask.status == ReviewStatus.IN_REVIEW.value,
+                )
+            ).scalar_one()
+        return {
+            "reviewer_id": reviewer_id,
+            "total_decided": total_decided,
+            "in_progress": in_progress,
+            "csam_exposure_shift": self._csam_exposure_count(reviewer_id, settings.shift_window_seconds, now),
+            "csam_exposure_week": self._csam_exposure_count(reviewer_id, settings.week_window_seconds, now),
+            "decided_last_hour": self._recent_decision_count(reviewer_id, settings.forced_break_window_seconds, now),
+            "csam_per_shift_limit": settings.csam_per_shift_limit,
+            "forced_break_after": settings.forced_break_after,
+        }
 
     def decide_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         decision = str(payload.get("decision", "")).lower()
@@ -836,7 +990,9 @@ class GovernanceService:
                 raise ConflictError(f"案件已被 {task.assigned_to} 锁定，无法裁定")
 
             task.status = DECIDED
-            task.assigned_to = task.assigned_to or reviewer_id
+            # 归属给实际裁定人（锁守卫已确保无他人持有效锁）；避免把裁定与曝光计数
+            # 错记到过期未清的旧持锁人头上。
+            task.assigned_to = reviewer_id
             task.decision = decision
             task.reason = reason
             task.decided_at = timestamp
@@ -1507,6 +1663,9 @@ class GovernanceService:
             "locked_at": row.get("locked_at"),
             "lock_expires_at": row.get("lock_expires_at"),
             "sla_deadline": row.get("sla_deadline"),
+            "priority": row.get("priority"),
+            "is_sensitive": row.get("is_sensitive"),
+            "jurisdiction": row.get("jurisdiction"),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "title": row.get("title"),

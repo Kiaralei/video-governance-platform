@@ -55,6 +55,13 @@ class Settings:
     sla_default_seconds: int = int(os.environ.get("VGP_SLA_DEFAULT_SECONDS", str(4 * 3600)))
     sla_warning_seconds: int = int(os.environ.get("VGP_SLA_WARNING_SECONDS", str(30 * 60)))
     realtime_sweep_seconds: float = float(os.environ.get("VGP_REALTIME_SWEEP_SECONDS", "15"))
+    # Stage 6：反疲劳 —— CSAM/敏感内容曝光上限 + 强制休息。
+    csam_per_shift_limit: int = int(os.environ.get("VGP_CSAM_PER_SHIFT_LIMIT", "10"))
+    csam_per_week_limit: int = int(os.environ.get("VGP_CSAM_PER_WEEK_LIMIT", "30"))
+    shift_window_seconds: int = int(os.environ.get("VGP_SHIFT_WINDOW_SECONDS", str(8 * 3600)))
+    week_window_seconds: int = int(os.environ.get("VGP_WEEK_WINDOW_SECONDS", str(7 * 24 * 3600)))
+    forced_break_after: int = int(os.environ.get("VGP_FORCED_BREAK_AFTER", "50"))
+    forced_break_window_seconds: int = int(os.environ.get("VGP_FORCED_BREAK_WINDOW_SECONDS", "3600"))
 
 
 settings = Settings()
