@@ -1,0 +1,1082 @@
+[
+  {
+    "title": "测试视频：家常菜教学 #00000",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_00",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00000_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00001",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_01",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00001_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00002",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_02",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00002_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00003",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_03",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00003_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00004",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_04",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00004_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00005",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_05",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00005_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00006",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_06",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00006_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00007",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_07",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00007_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00008",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_08",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00008_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00009",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_09",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00009_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00010",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_10",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00010_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00011",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_11",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00011_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00012",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_12",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00012_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00013",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_13",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00013_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00014",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_14",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00014_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00015",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_15",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00015_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00016",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_16",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00016_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00017",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_17",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00017_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00018",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_18",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00018_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00019",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_19",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00019_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00020",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_00",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00020_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00021",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_01",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00021_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00022",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_02",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00022_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00023",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_03",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00023_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00024",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_04",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00024_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00025",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_05",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00025_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00026",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_06",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00026_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00027",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_07",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00027_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00028",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_08",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00028_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00029",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_09",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00029_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00030",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_10",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00030_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00031",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_11",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00031_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00032",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_12",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00032_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00033",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_13",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00033_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00034",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_14",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00034_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00035",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_15",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00035_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00036",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_16",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00036_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00037",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_17",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00037_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00038",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_18",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00038_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00039",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_19",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00039_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00040",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_00",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00040_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00041",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_01",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00041_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00042",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_02",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00042_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00043",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_03",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00043_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00044",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_04",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00044_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00045",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_05",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00045_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00046",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_06",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00046_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00047",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_07",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00047_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00048",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_08",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00048_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00049",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_09",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00049_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00050",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_10",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00050_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00051",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_11",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00051_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00052",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_12",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00052_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00053",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_13",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00053_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00054",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_14",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00054_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00055",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_15",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00055_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00056",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_16",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00056_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00057",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_17",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00057_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00058",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_18",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00058_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00059",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_19",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00059_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00060",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_00",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00060_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00061",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_01",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00061_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00062",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_02",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00062_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00063",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_03",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00063_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00064",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_04",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00064_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00065",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_05",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00065_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00066",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_06",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00066_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00067",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_07",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00067_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00068",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_08",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00068_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00069",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_09",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00069_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00070",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_10",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00070_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00071",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_11",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00071_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00072",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_12",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00072_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00073",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_13",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00073_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00074",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_14",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00074_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00075",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_15",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00075_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00076",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_16",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00076_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00077",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_17",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00077_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00078",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_18",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00078_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00079",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_19",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00079_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00080",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_00",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00080_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00081",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_01",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00081_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00082",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_02",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00082_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00083",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_03",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00083_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00084",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_04",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00084_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00085",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_05",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00085_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00086",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_06",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00086_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00087",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_07",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00087_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00088",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_08",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00088_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00089",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_09",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00089_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00090",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_10",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00090_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00091",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_11",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00091_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00092",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_12",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00092_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00093",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_13",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00093_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00094",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_14",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00094_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00095",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_15",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00095_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00096",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_16",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00096_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00097",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_17",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00097_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00098",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_18",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00098_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00099",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_19",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00099_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00100",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_00",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00100_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00101",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_01",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00101_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00102",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_02",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00102_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00103",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_03",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00103_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00104",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_04",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00104_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00105",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_05",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00105_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00106",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_06",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00106_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00107",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_07",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00107_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00108",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_08",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00108_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00109",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_09",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00109_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00110",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_10",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00110_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00111",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_11",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00111_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00112",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_12",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00112_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00113",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_13",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00113_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00114",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_14",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00114_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  },
+  {
+    "title": "测试视频：家常菜教学 #00115",
+    "description": "一条普通做饭教学视频，语气平和，适合通过审核。",
+    "creator_id": "creator_load_15",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00115_normal_cooking.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_cooking"
+  },
+  {
+    "title": "测试视频：城市旅行记录 #00116",
+    "description": "一条普通旅行短视频，展示街景和地标。",
+    "creator_id": "creator_load_16",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00116_normal_travel.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "normal_travel"
+  },
+  {
+    "title": "测试视频：课程片段 #00117",
+    "description": "一条普通教育内容，用于测试低风险机审。",
+    "creator_id": "creator_load_17",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00117_education.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "education"
+  },
+  {
+    "title": "测试视频：扫码领取优惠 #00118",
+    "description": "画面提示 scan QR code 领取 bonus，用于测试导流和营销风险。",
+    "creator_id": "creator_load_18",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00118_marketing_qr.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "marketing_qr"
+  },
+  {
+    "title": "测试视频：betting bonus 宣传 #00119",
+    "description": "内容包含 betting bonus 和 gambling 相关词，用于测试 block 建议。",
+    "creator_id": "creator_load_19",
+    "poi": "global",
+    "video_url": "D:\\Github\\video-governance-platform\\data\\test_videos\\00119_betting.mp4",
+    "fixture_mode": "mp4",
+    "fixture_kind": "betting"
+  }
+]
