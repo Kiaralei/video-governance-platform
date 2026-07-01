@@ -31,6 +31,7 @@ from .auth import (
     require_permission,
 )
 from .config import settings
+from .observability import render_prometheus
 from .rate_limiter import RATE_LIMITS, RateLimiter
 from .realtime import hub, make_envelope
 from .redis_client import get_redis
@@ -163,6 +164,43 @@ def audit(request: Request, content_id: Optional[str] = None) -> dict[str, Any]:
 )
 def dead_letters(request: Request, offset: int = 0, limit: int = 50) -> dict[str, Any]:
     return _service(request).list_dead_letters(offset=offset, limit=limit)
+
+
+@system_router.get("/system/health")
+def system_health(request: Request) -> dict[str, Any]:
+    """健康探针：DB 后端 + Redis + 熔断/限流可用性。"""
+    redis_ok = get_redis() is not None
+    return {
+        "status": "ok",
+        "app": settings.app_name,
+        "components": {
+            "database": "postgresql" if settings.database_url else "sqlite",
+            "redis": "up" if redis_ok else "absent",
+            "realtime_connections": hub.connection_count(),
+        },
+    }
+
+
+@system_router.get("/system/ready")
+def system_ready(request: Request) -> dict[str, Any]:
+    # 服务已在 lifespan 建好即视为就绪。
+    return {"ready": True}
+
+
+@system_router.post(
+    "/audit/integrity/verify", dependencies=[Depends(require_permission("audit.read"))]
+)
+def audit_integrity_verify(request: Request) -> dict[str, Any]:
+    """链式完整性校验：重算审计哈希链，检测篡改/断链。"""
+    return _service(request).verify_audit_integrity()
+
+
+@system_router.get("/content/{content_id}/sor")
+def content_sor(
+    request: Request, content_id: str, user: Principal = Depends(get_current_user)
+) -> dict[str, Any]:
+    """获取内容的对外理由（SoR）。与内部审核笔记物理分离。"""
+    return _service(request).generate_sor(content_id)
 
 
 # --- ingestion / pipeline ----------------------------------------------------
@@ -575,6 +613,12 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     # Stage 5：WebSocket 实时推送端点。
     app.add_api_websocket_route("/ws/review", review_websocket)
+
+    # Stage 9：Prometheus 指标端点（标准 /metrics，文本 exposition）。
+    @app.get("/metrics", include_in_schema=False)
+    def metrics(request: Request) -> PlainTextResponse:
+        snapshot = request.app.state.service.metrics_snapshot()
+        return PlainTextResponse(content=render_prometheus(snapshot), media_type="text/plain; version=0.0.4")
 
     # 静态前端挂在根路径，作为兜底；API 路由已先注册，优先匹配。
     frontend_dir = settings.frontend_dir

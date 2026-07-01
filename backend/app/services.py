@@ -24,6 +24,7 @@ from .evidence import EvidenceExtractor
 from .llm_review import is_llm_configured
 from .quality import FlywheelSource, classify_sample, fleiss_kappa, passes_quality_gate
 from .realtime import hub
+from .sor import SOR_TEMPLATE_ID, render_sor
 from .review_workflow import DECISION_PRIORITY, QueuePriority, ReviewStatus, can_transition
 from .auth import hash_password, verify_password
 from .models import (
@@ -1714,6 +1715,118 @@ class GovernanceService:
                 action="policy_version_activated", detail={"version_id": version_id},
             )
         return {"version_id": version_id, "status": "active"}
+
+    # --- Stage 9：可观测性 + 审计完整性 + SoR --------------------------------
+
+    def verify_audit_integrity(self) -> dict[str, Any]:
+        """重算审计哈希链，检测篡改 / 断链。对齐设计 §12.3。"""
+        prev = "GENESIS"
+        checked = 0
+        with self._session_factory() as session:
+            rows = session.execute(select(AuditLog).order_by(AuditLog.id.asc())).scalars().all()
+        for row in rows:
+            checked += 1
+            payload = dumps(
+                {
+                    "content_id": row.content_id,
+                    "task_id": row.task_id,
+                    "actor": row.actor,
+                    "action": row.action,
+                    "detail": loads(row.detail_json),
+                    "prev_hash": row.prev_hash,
+                    "created_at": row.created_at,
+                }
+            )
+            recomputed = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+            if row.prev_hash != prev:
+                return {"valid": False, "checked": checked,
+                        "break_point": {"id": row.id, "reason": "chain_linkage_broken"}}
+            if recomputed != row.entry_hash:
+                return {"valid": False, "checked": checked,
+                        "break_point": {"id": row.id, "reason": "entry_hash_mismatch"}}
+            prev = row.entry_hash
+        return {"valid": True, "checked": checked, "break_point": None}
+
+    def metrics_snapshot(self) -> dict[str, Any]:
+        """业务指标快照（供 Prometheus 渲染）。对齐设计 §9.4。"""
+        now_str = now_iso()
+        with self._session_factory() as session:
+            decisions = {
+                (fd or "none"): c
+                for fd, c in session.execute(
+                    select(ContentItem.final_decision, func.count()).group_by(ContentItem.final_decision)
+                ).all()
+            }
+            jobs = {
+                status: c
+                for status, c in session.execute(
+                    select(PipelineJob.status, func.count()).group_by(PipelineJob.status)
+                ).all()
+            }
+            queue_size = session.execute(
+                select(func.count()).select_from(HumanReviewTask).where(HumanReviewTask.status == PENDING)
+            ).scalar_one()
+            sla_violations = session.execute(
+                select(func.count()).select_from(HumanReviewTask).where(
+                    HumanReviewTask.status != DECIDED,
+                    HumanReviewTask.sla_deadline.isnot(None),
+                    HumanReviewTask.sla_deadline < now_str,
+                )
+            ).scalar_one()
+            dead_letters = session.execute(select(func.count()).select_from(DeadLetterTask)).scalar_one()
+            flywheel = session.execute(select(func.count()).select_from(FlywheelSample)).scalar_one()
+            appeals_total = session.execute(select(func.count()).select_from(AppealCase)).scalar_one()
+            overturned = session.execute(
+                select(func.count()).select_from(AppealCase).where(
+                    AppealCase.status == AppealStatus.OVERTURNED.value
+                )
+            ).scalar_one()
+            golden_total = session.execute(
+                select(func.count()).select_from(FlywheelSample).where(
+                    FlywheelSample.source_type == FlywheelSource.GOLDEN.value
+                )
+            ).scalar_one()
+            golden_correct = session.execute(
+                select(func.count()).select_from(FlywheelSample).where(
+                    FlywheelSample.source_type == FlywheelSource.GOLDEN.value,
+                    FlywheelSample.quality_gate_passed.is_(True),
+                )
+            ).scalar_one()
+        return {
+            "pipeline_decision_total": decisions,
+            "pipeline_jobs": jobs,
+            "human_review_queue_size": queue_size,
+            "human_review_sla_violations_total": sla_violations,
+            "dead_letter_tasks_total": dead_letters,
+            "flywheel_samples_total": flywheel,
+            "appeal_overturn_rate": round(overturned / appeals_total, 4) if appeals_total else 0.0,
+            "golden_test_accuracy": round(golden_correct / golden_total, 4) if golden_total else 0.0,
+        }
+
+    def generate_sor(self, content_id: str) -> dict[str, Any]:
+        """生成对外 SoR（与内部理由物理分离，不含内部笔记/阈值）。"""
+        with self._session_factory() as session:
+            content = session.get(ContentItem, content_id)
+            if content is None:
+                raise NotFoundError("内容不存在")
+            machine = session.execute(
+                select(MachineReview).where(MachineReview.content_id == content_id)
+            ).scalar_one_or_none()
+        decision = content.final_decision or "pending"
+        triggered_dims: list[str] = []
+        if machine is not None:
+            for verdict in loads(machine.verdicts_json):
+                if verdict.get("decision") == "VIOLATION":
+                    triggered_dims.append(verdict.get("dimension_id", ""))
+        sor_text = render_sor(decision, content.title, triggered_dims)
+        return {
+            "content_id": content_id,
+            "decision": decision,
+            "sor_text": sor_text,
+            "template_id": SOR_TEMPLATE_ID,
+            "triggered_dimensions": triggered_dims,
+            "contains_internal_reason": False,
+        }
 
     # --- Stage 8：质检 + 数据回流 --------------------------------------------
 
