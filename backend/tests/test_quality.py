@@ -17,7 +17,11 @@ GAMBLING = {
     "description": "scan the qr to claim your betting bonus at our casino",
     "creator_id": "creator_bet",
 }
-NEUTRAL = {"title": "cooking", "description": "a calm family recipe tutorial", "creator_id": "c"}
+NEUTRAL = {
+    "title": "daily vlog",
+    "description": "an ordinary personal update without enough policy context",
+    "creator_id": "c",
+}
 
 
 class KappaUnitTest(unittest.TestCase):
@@ -73,12 +77,12 @@ class FlywheelIntegrationTest(unittest.TestCase):
     def test_disagreement_sample_overkill(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = self._service(tmp)
-            # 机审建议 block（博彩），人审改判 pass -> disagreement/overkill。
-            self._decide(service, GAMBLING, "pass")
+            # 新流程下 block 不进人审；只有 uncertain 内容会产生人审样本。
+            self._decide(service, NEUTRAL, "pass")
             samples = service.list_flywheel_samples()["items"]
             self.assertEqual(len(samples), 1)
-            self.assertEqual(samples[0]["source_type"], "disagreement")
-            self.assertEqual(samples[0]["error_type"], "overkill")
+            self.assertEqual(samples[0]["source_type"], "ground_truth")
+            self.assertEqual(samples[0]["error_type"], "")
 
     def test_ground_truth_sample_on_agreement(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -123,12 +127,15 @@ class FlywheelIntegrationTest(unittest.TestCase):
     def test_quality_summary_and_jsonl_export(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = self._service(tmp)
-            self._decide(service, GAMBLING, "pass")   # disagreement
-            self._decide(service, NEUTRAL, "pass")    # ground_truth
+            self._decide(service, NEUTRAL, "pass")
+            self._decide(
+                service,
+                {"title": "daily vlog two", "description": "another ordinary update", "creator_id": "c"},
+                "block",
+            )
             summary = service.quality_summary()
             self.assertEqual(summary["total_samples"], 2)
-            # 1 disagreement / (1 ground_truth + 1 disagreement) = 0.5。
-            self.assertEqual(summary["human_override_rate"], 0.5)
+            self.assertEqual(summary["human_override_rate"], 0.0)
             jsonl = service.export_flywheel_jsonl(only_passed=True)
             self.assertEqual(len(jsonl.strip().splitlines()), 2)
 

@@ -1,5 +1,7 @@
 .cache/
 .codegraph/
+data/evidence/
+data/media_assets/*/
 __pycache__/
 *.pyc
 *.pyo

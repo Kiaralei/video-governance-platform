@@ -145,6 +145,91 @@ class GovernanceService:
         created = [self.ingest_content(item) for item in examples]
         return {"items": created}
 
+    def seed_demo_cases(self) -> dict[str, Any]:
+        """Create a stable demo batch that exercises the production routing paths."""
+        batch_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+        examples = [
+            {
+                "scenario": "critical_gambling_block",
+                "expected_policy_decision": "critical_escalate",
+                "title": f"DEMO critical gambling {batch_id}",
+                "description": "Casino betting bonus. Scan QR to join invite group for odds reward.",
+                "creator_id": "demo_creator_gambling_critical",
+                "poi": "global",
+                "video_url": "https://example.local/videos/demo-critical-gambling.mp4",
+            },
+            {
+                "scenario": "gambling_auto_block",
+                "expected_policy_decision": "auto_block",
+                "title": f"DEMO gambling auto block {batch_id}",
+                "description": "Casino betting lottery wager odds casino betting lottery odds.",
+                "creator_id": "demo_creator_gambling",
+                "poi": "global",
+                "video_url": "https://example.local/videos/demo-gambling-auto-block.mp4",
+            },
+            {
+                "scenario": "drug_violence_auto_block",
+                "expected_policy_decision": "auto_block",
+                "title": f"DEMO drug violence auto block {batch_id}",
+                "description": "Weapon gun knife violence blood scene shown in a dangerous clip.",
+                "creator_id": "demo_creator_safety",
+                "poi": "global",
+                "video_url": "https://example.local/videos/demo-drug-violence-auto-block.mp4",
+            },
+            {
+                "scenario": "marketing_needs_human_review",
+                "expected_policy_decision": "needs_human_review",
+                "title": f"DEMO marketing needs human review {batch_id}",
+                "description": "Creator mentions discount coupon for handmade stickers in a lifestyle vlog.",
+                "creator_id": "demo_creator_marketing",
+                "poi": "global",
+                "video_url": "https://example.local/videos/demo-marketing-review.mp4",
+            },
+            {
+                "scenario": "cooking_auto_pass",
+                "expected_policy_decision": "auto_pass",
+                "title": f"DEMO cooking auto pass {batch_id}",
+                "description": "Family cooking recipe lesson with tomato soup and calm narration.",
+                "creator_id": "demo_creator_cooking",
+                "poi": "global",
+                "video_url": "https://example.local/videos/demo-cooking-pass.mp4",
+            },
+        ]
+        created: list[dict[str, Any]] = []
+        for item in examples:
+            scenario = item.pop("scenario")
+            expected = item.pop("expected_policy_decision")
+            job = self.ingest_content(item)
+            self._run_pipeline_for_demo(job["job_id"], job["content_id"])
+            review = self.get_machine_review(job["content_id"])
+            created.append(
+                {
+                    "scenario": scenario,
+                    "expected_policy_decision": expected,
+                    "content_id": job["content_id"],
+                    "job_id": job["job_id"],
+                    "title": item["title"],
+                    "recommendation": review["recommendation"],
+                    "final_decision": review["final_decision"],
+                    "content_status": review["content_status"],
+                    "task_id": review["task_id"],
+                    "task_status": review["task_status"],
+                    "policy_decision": review["decision_summary"]["final_decision"],
+                    "risk_score": review["confidence"],
+                    "triggered_rules": review["decision_summary"].get("triggered_rules", []),
+                }
+            )
+        return {"batch_id": batch_id, "total": len(created), "items": created}
+
+    def _run_pipeline_for_demo(self, job_id: str, content_id: str) -> None:
+        try:
+            self.claim_pipeline_job(job_id)
+            self.extract_evidence_stage(job_id)
+            self.run_machine_review_stage(job_id)
+        except Exception as exc:
+            self._mark_pipeline_failed(job_id, content_id, exc)
+            raise
+
     def ingest_content(self, payload: dict[str, Any]) -> dict[str, Any]:
         title = str(payload.get("title", "")).strip()
         description = str(payload.get("description", "")).strip()
@@ -461,7 +546,7 @@ class GovernanceService:
             )
 
     def run_machine_review_stage(self, job_id: str) -> None:
-        """阶段2：机审 + 入人审队列。幂等 —— 机审记录已存在则直接返回。"""
+        """阶段2：机审分流。机审明确通过/拦截直接终结，只有不确定才进入人审。"""
         timestamp = now_iso()
         with self._session_factory.begin() as session:
             job = session.get(PipelineJob, job_id)
@@ -479,7 +564,6 @@ class GovernanceService:
             evidence = loads(evidence_row.package_json)
             text_blob = f"{content.title} {content.description}".lower()
             machine_review_id = new_id("mr")
-            task_id = new_id("task")
             policy_version = self._active_policy_version(session)
             machine = self._run_machine_review(
                 machine_review_id, job.content_id, evidence, text_blob, policy_version
@@ -509,54 +593,78 @@ class GovernanceService:
                     "job_id": job_id,
                     "machine_review_id": machine["id"],
                     "recommendation": machine["recommendation"],
+                    "final_decision": machine["decision_summary"].get("final_decision"),
                 },
             )
 
-            sla_deadline = (
-                _parse_iso(timestamp) + timedelta(seconds=settings.sla_default_seconds)
-            ).isoformat()
             summary = machine["decision_summary"]
             final_decision = summary.get("final_decision", "needs_human_review")
-            priority = DECISION_PRIORITY.get(final_decision, QueuePriority.NORMAL.value)
-            is_sensitive = final_decision == "critical_escalate" or any(
-                v.get("severity_suggestion") == "critical" for v in machine["verdicts"]
-            )
-            session.add(
-                HumanReviewTask(
-                    id=task_id,
-                    content_id=job.content_id,
-                    evidence_package_id=evidence_row.id,
-                    status=PENDING,
-                    assigned_to=None,
-                    decision=None,
-                    reason=None,
-                    decided_at=None,
-                    locked_at=None,
-                    lock_expires_at=None,
-                    sla_deadline=sla_deadline,
-                    sla_warned=False,
-                    priority=priority,
-                    is_sensitive=is_sensitive,
-                    jurisdiction=str(content.jurisdiction or "global"),
-                    created_at=timestamp,
-                    updated_at=timestamp,
+            action = summary.get("action", {})
+            route_to_human = bool(action.get("route_to_human_review"))
+
+            if route_to_human:
+                task_id = new_id("task")
+                sla_deadline = (
+                    _parse_iso(timestamp) + timedelta(seconds=settings.sla_default_seconds)
+                ).isoformat()
+                priority = DECISION_PRIORITY.get(final_decision, QueuePriority.NORMAL.value)
+                is_sensitive = final_decision == "critical_escalate" or any(
+                    v.get("severity_suggestion") == "critical" for v in machine["verdicts"]
                 )
-            )
+                session.add(
+                    HumanReviewTask(
+                        id=task_id,
+                        content_id=job.content_id,
+                        evidence_package_id=evidence_row.id,
+                        status=PENDING,
+                        assigned_to=None,
+                        decision=None,
+                        reason=None,
+                        decided_at=None,
+                        locked_at=None,
+                        lock_expires_at=None,
+                        sla_deadline=sla_deadline,
+                        sla_warned=False,
+                        priority=priority,
+                        is_sensitive=is_sensitive,
+                        jurisdiction=str(content.jurisdiction or "global"),
+                        created_at=timestamp,
+                        updated_at=timestamp,
+                    )
+                )
+                job.stage = "human_review_queued"
+                content.status = "human_review"
+                self._append_audit(
+                    session,
+                    content_id=job.content_id,
+                    task_id=task_id,
+                    actor="pipeline_worker",
+                    action="human_review_task_created",
+                    detail={"job_id": job_id, "task_id": task_id, "final_decision": final_decision},
+                )
+            else:
+                final = PASS if machine["recommendation"] == PASS else BLOCK
+                content.status = f"final_{final}"
+                content.final_decision = final
+                job.stage = "machine_auto_decided"
+                self._append_audit(
+                    session,
+                    content_id=job.content_id,
+                    task_id=None,
+                    actor="pipeline_worker",
+                    action="machine_auto_decided",
+                    detail={
+                        "job_id": job_id,
+                        "machine_review_id": machine["id"],
+                        "final_decision": final,
+                        "policy_decision": final_decision,
+                    },
+                )
+
             job.status = JOB_COMPLETED
-            job.stage = "human_review_queued"
             job.updated_at = timestamp
             job.finished_at = timestamp
-            content.status = "human_review"
             content.updated_at = timestamp
-
-            self._append_audit(
-                session,
-                content_id=job.content_id,
-                task_id=task_id,
-                actor="pipeline_worker",
-                action="human_review_task_created",
-                detail={"job_id": job_id, "task_id": task_id},
-            )
 
     def _mark_pipeline_failed(self, job_id: str, content_id: str, exc: Exception) -> None:
         timestamp = now_iso()
@@ -643,7 +751,7 @@ class GovernanceService:
                     FROM machine_reviews m
                     JOIN content_items c ON c.id = m.content_id
                     JOIN evidence_packages e ON e.content_id = c.id
-                    JOIN human_review_tasks t ON t.content_id = c.id
+                    LEFT JOIN human_review_tasks t ON t.content_id = c.id
                     ORDER BY m.created_at DESC
                     LIMIT :limit OFFSET :offset
                     """
@@ -665,7 +773,7 @@ class GovernanceService:
                     FROM machine_reviews m
                     JOIN content_items c ON c.id = m.content_id
                     JOIN evidence_packages e ON e.content_id = c.id
-                    JOIN human_review_tasks t ON t.content_id = c.id
+                    LEFT JOIN human_review_tasks t ON t.content_id = c.id
                     WHERE m.content_id = :content_id
                     """
                 ),
@@ -2165,7 +2273,7 @@ class GovernanceService:
     def _summary_rationale(summary: Any) -> str:
         triggered = summary.triggered_rules
         if not triggered:
-            return "各审核维度均未命中违规，机审建议放行（最终裁定仍由人审完成）。"
+            return "各审核维度均未命中违规，机审建议放行。"
         return (
             f"机审最终决策 {summary.final_decision.value}（风险分 {summary.risk_score:.2f}）；"
             f"命中规则: {', '.join(triggered)}。"

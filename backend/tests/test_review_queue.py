@@ -20,7 +20,11 @@ GAMBLING = {
     "description": "scan the qr to claim your betting bonus at our casino",
     "creator_id": "creator_bet",
 }
-NEUTRAL = {"title": "cooking", "description": "a calm family recipe tutorial", "creator_id": "c"}
+NEUTRAL = {
+    "title": "daily vlog",
+    "description": "an ordinary personal update without enough policy context",
+    "creator_id": "c",
+}
 
 
 class ReviewQueueTest(unittest.TestCase):
@@ -41,11 +45,16 @@ class ReviewQueueTest(unittest.TestCase):
     def test_priority_ordering_critical_before_low(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = self._service(tmp)
-            self._ingest(service, NEUTRAL)      # auto_pass -> priority LOW(8)
-            self._ingest(service, GAMBLING)     # critical_escalate -> priority CRITICAL(1)
+            self._ingest(service, NEUTRAL)
+            self._ingest(service, {"title": "daily vlog two", "description": "another ordinary update", "creator_id": "c"})
             service.drain_pipeline()
+            queue = service.list_queue()["items"]
+            with service._session_factory.begin() as s:
+                task = s.get(HumanReviewTask, queue[1]["task_id"])
+                task.priority = 1
+                task.is_sensitive = True
 
-            # 队列按优先级：博彩(critical) 排在做饭(low) 之前。
+            # 队列按优先级排序：priority=1 的任务排在常规任务之前。
             queue = service.list_queue()["items"]
             self.assertEqual(queue[0]["priority"], 1)
             self.assertTrue(queue[0]["is_sensitive"])
@@ -100,18 +109,24 @@ class ReviewQueueTest(unittest.TestCase):
             service = self._service(tmp)
             patched = replace(base_settings, csam_per_shift_limit=1)
             with patch.object(services_module, "settings", patched):
-                # 先让 reviewer 裁定一个敏感(博彩)案件 -> 达到 CSAM 上限。
-                self._ingest(service, GAMBLING)
+                # 先让 reviewer 裁定一个敏感案件 -> 达到 CSAM 上限。
+                self._ingest(service, NEUTRAL)
                 service.drain_pipeline()
+                task_id = service.list_queue()["items"][0]["task_id"]
+                with service._session_factory.begin() as s:
+                    s.get(HumanReviewTask, task_id).is_sensitive = True
                 r = service.fetch_next("reviewer_a")
                 self.assertTrue(r["task"]["is_sensitive"])
                 service.decide_task(
-                    r["task"]["task_id"], {"decision": "block", "reason": "gambling", "reviewer_id": "reviewer_a"}
+                    r["task"]["task_id"], {"decision": "block", "reason": "sensitive", "reviewer_id": "reviewer_a"}
                 )
                 # 再来一个敏感 + 一个非敏感案件。
-                self._ingest(service, GAMBLING)
                 self._ingest(service, NEUTRAL)
+                self._ingest(service, {"title": "daily vlog three", "description": "ordinary update", "creator_id": "c"})
                 service.drain_pipeline()
+                queue = service.list_queue()["items"]
+                with service._session_factory.begin() as s:
+                    s.get(HumanReviewTask, queue[0]["task_id"]).is_sensitive = True
                 # 超敏感曝光上限 -> 只派非敏感案件。
                 nxt = service.fetch_next("reviewer_a")
                 self.assertEqual(nxt["status"], "assigned")
@@ -152,7 +167,9 @@ class ReviewQueueTest(unittest.TestCase):
             with service._session_factory() as s:
                 self.assertEqual(s.get(HumanReviewTask, task_id).assigned_to, "reviewer_b")
 
-    def _insert_pending_task(self, service, content_id, evidence_package_id) -> str:
+    def _insert_pending_task(
+        self, service, content_id, evidence_package_id, priority: int = 5, is_sensitive: bool = False
+    ) -> str:
         task_id = new_id("task")
         ts = now_iso()
         with service._session_factory.begin() as s:
@@ -162,8 +179,8 @@ class ReviewQueueTest(unittest.TestCase):
                     content_id=content_id,
                     evidence_package_id=evidence_package_id,
                     status="pending",
-                    priority=5,
-                    is_sensitive=False,
+                    priority=priority,
+                    is_sensitive=is_sensitive,
                     jurisdiction="global",
                     sla_warned=False,
                     created_at=ts,

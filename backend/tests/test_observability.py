@@ -84,12 +84,6 @@ class SoRTest(unittest.TestCase):
             service = GovernanceService(Path(tmp) / "t.sqlite3")
             cid = service.ingest_content(GAMBLING)["content_id"]
             service.drain_pipeline()
-            task_id = service.list_queue()["items"][0]["task_id"]
-            service.claim_task(task_id, "reviewer_a")
-            service.decide_task(
-                task_id,
-                {"decision": "block", "reason": "INTERNAL-secret-threshold-0.9", "reviewer_id": "reviewer_a"},
-            )
             sor = service.generate_sor(cid)
             self.assertEqual(sor["decision"], "block")
             self.assertIn("未通过", sor["sor_text"])

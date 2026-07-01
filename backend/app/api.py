@@ -552,6 +552,11 @@ def dev_seed_users(request: Request) -> dict[str, Any]:
     return _service(request).seed_users()
 
 
+@dev_router.post("/demo-cases")
+def dev_demo_cases(request: Request) -> dict[str, Any]:
+    return _service(request).seed_demo_cases()
+
+
 _ROUTERS = (
     auth_router,
     system_router,

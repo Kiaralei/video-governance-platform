@@ -30,7 +30,13 @@ class CaseLockTest(unittest.TestCase):
         self.env.stop()
 
     def _ready_task(self, service: GovernanceService) -> str:
-        service.ingest_content({"title": "clip", "description": "neutral cooking clip", "creator_id": "c"})
+        service.ingest_content(
+            {
+                "title": "daily vlog",
+                "description": "an ordinary personal update without enough policy context",
+                "creator_id": "c",
+            }
+        )
         service.drain_pipeline()
         return service.list_queue()["items"][0]["task_id"]
 

@@ -146,10 +146,7 @@ class DecisionSummary:
 
     def action(self) -> dict[str, Any]:
         publish = self.final_decision == PolicyDecision.AUTO_PASS
-        route_to_human = self.final_decision in (
-            PolicyDecision.NEEDS_HUMAN_REVIEW,
-            PolicyDecision.CRITICAL_ESCALATE,
-        )
+        route_to_human = self.final_decision == PolicyDecision.NEEDS_HUMAN_REVIEW
         priority = "high" if self.final_decision == PolicyDecision.CRITICAL_ESCALATE else "normal"
         return {
             "publish": publish,

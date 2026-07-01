@@ -15,6 +15,8 @@ export interface DimensionVerdict {
   severity_suggestion: string | null
   reason: string
   source: string
+  model_version?: string
+  llm_unavailable?: boolean
 }
 
 export interface DecisionSummary {
@@ -53,13 +55,45 @@ export interface CaseDetail {
     video_url: string
     final_decision: string | null
   }
-  evidence: Record<string, unknown>
+  evidence: EvidencePackage
   machine_review: {
     recommendation: string | null
     confidence: number
     rationale: string
     verdicts: DimensionVerdict[]
   }
+}
+
+export interface ModalityInvocation {
+  modality: 'asr' | 'ocr' | 'vision' | string
+  status: 'completed' | 'failed' | 'not_configured' | 'invalid_response' | string
+  provider?: string
+  model_version?: string
+  error?: string
+  warnings?: string[]
+}
+
+export interface EvidencePackage {
+  content_id?: string
+  media_asset?: {
+    status?: string
+    source_type?: string
+    storage_backend?: string
+    mime_type?: string
+    file_size_bytes?: number
+    local_path?: string
+    storage_uri?: string
+  }
+  video_meta?: Record<string, unknown>
+  frames?: Array<{ frame_id: string; timestamp_ms?: number; thumbnail_path?: string; caption?: string }>
+  asr_transcript?: Array<{ start_ms?: number; end_ms?: number; text: string; source?: string; model_version?: string }>
+  ocr_results?: Array<{ frame_id?: string; text: string; bbox?: unknown; source?: string; model_version?: string }>
+  object_detections?: Array<{ frame_id?: string; label: string; confidence?: number; source?: string }>
+  scene_tags?: Array<{ tag: string; confidence?: number }>
+  modality_model_invocations?: ModalityInvocation[]
+  modality_availability?: Record<string, { available?: boolean; source?: string; mode?: string; extracted_count?: number }>
+  extraction_notes?: string[]
+  machine_review_llm_used?: boolean
 }
 
 export interface Dimension {
@@ -102,6 +136,47 @@ export interface DashboardSummary {
   queue: { pending: number; decided: number }
   pipeline: { queued: number; processing: number; completed: number; failed: number }
   decisions: { pass: number; block: number }
+}
+
+export interface MachineReviewRow {
+  review_id: string
+  content_id: string
+  task_id: string | null
+  evidence_package_id: string
+  title: string
+  description: string
+  creator_id: string
+  content_status: string
+  task_status: string | null
+  final_decision: string | null
+  recommendation: string | null
+  confidence: number
+  rationale: string
+  verdicts: DimensionVerdict[]
+  decision_summary: DecisionSummary | null
+  created_at: string
+}
+
+export interface DemoCaseResult {
+  scenario: string
+  expected_policy_decision: string
+  content_id: string
+  job_id: string
+  title: string
+  recommendation: string
+  final_decision: string | null
+  content_status: string
+  task_id: string | null
+  task_status: string | null
+  policy_decision: string
+  risk_score: number
+  triggered_rules: string[]
+}
+
+export interface DemoCasesResponse {
+  batch_id: string
+  total: number
+  items: DemoCaseResult[]
 }
 
 export interface WsEnvelope {

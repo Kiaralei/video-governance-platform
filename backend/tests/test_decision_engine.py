@@ -229,7 +229,11 @@ class ServiceIntegrationTest(unittest.TestCase):
             summary = detail["decision_summary"]
             # 博彩 + 引流(qr/scan) -> critical_escalate；取严链盖过其他 pass 维度。
             self.assertIn(summary["final_decision"], ("auto_block", "critical_escalate"))
+            self.assertFalse(summary["action"]["route_to_human_review"])
             self.assertEqual(detail["recommendation"], "block")
+            self.assertEqual(detail["content_status"], "final_block")
+            self.assertEqual(detail["final_decision"], "block")
+            self.assertEqual(service.list_queue()["total"], 0)
             gambling = [v for v in detail["verdicts"] if v["dimension_id"] == "dim_gambling"][0]
             self.assertEqual(gambling["decision"], "VIOLATION")
 

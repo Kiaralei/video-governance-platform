@@ -43,11 +43,6 @@ class MvpFlowTest(unittest.TestCase):
 
             self.assertEqual(service.drain_pipeline(), 1)
 
-            queue = service.list_queue()
-            self.assertEqual(queue["total"], 1)
-            task_id = queue["items"][0]["task_id"]
-            self.assertEqual(queue["items"][0]["task_id"], task_id)
-
             machine_reviews = service.list_machine_reviews()
             self.assertEqual(machine_reviews["total"], 1)
             self.assertEqual(machine_reviews["items"][0]["content_id"], queued["content_id"])
@@ -59,18 +54,10 @@ class MvpFlowTest(unittest.TestCase):
             self.assertIn("dim_gambling", dimension_ids)
             self.assertEqual(machine_detail["recommendation"], "pass")  # 中性做饭内容 -> AUTO_PASS
             self.assertEqual(machine_detail["decision_summary"]["final_decision"], "auto_pass")
-
-            claimed = service.claim_task(task_id, "reviewer_1")
-            self.assertEqual(claimed["task"]["assigned_to"], "reviewer_1")
-
-            result = service.decide_task(
-                task_id,
-                {"decision": "pass", "reason": "Evidence is low risk.", "reviewer_id": "reviewer_1"},
-            )
-            self.assertEqual(result["decision"], "pass")
-
-            decided_queue = service.list_queue(status="decided")
-            self.assertEqual(decided_queue["total"], 1)
+            self.assertEqual(machine_detail["decision_summary"]["action"]["route_to_human_review"], False)
+            self.assertEqual(machine_detail["content_status"], "final_pass")
+            self.assertEqual(machine_detail["final_decision"], "pass")
+            self.assertEqual(service.list_queue()["total"], 0)
 
             audit = service.get_audit(content_id=queued["content_id"])
             self.assertEqual([item["action"] for item in audit["items"]], [
@@ -78,10 +65,66 @@ class MvpFlowTest(unittest.TestCase):
                 "pipeline_started",
                 "evidence_extracted",
                 "machine_review_completed",
-                "human_review_task_created",
-                "task_claimed",
-                "human_decision_submitted",
+                "machine_auto_decided",
             ])
+
+    def test_uncertain_machine_review_routes_to_human_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = GovernanceService(Path(tmp) / "test.sqlite3")
+            queued = service.ingest_content(
+                {
+                    "title": "Daily vlog",
+                    "description": "An ordinary personal update without enough policy context.",
+                    "creator_id": "creator_uncertain",
+                }
+            )
+            self.assertEqual(service.drain_pipeline(), 1)
+
+            machine_detail = service.get_machine_review(queued["content_id"])
+            self.assertEqual(machine_detail["recommendation"], "uncertain")
+            self.assertEqual(machine_detail["decision_summary"]["final_decision"], "needs_human_review")
+            self.assertEqual(machine_detail["decision_summary"]["action"]["route_to_human_review"], True)
+            self.assertEqual(machine_detail["content_status"], "human_review")
+            self.assertIsNone(machine_detail["final_decision"])
+            queue = service.list_queue()
+            self.assertEqual(queue["total"], 1)
+
+            claimed = service.claim_task(queue["items"][0]["task_id"], "reviewer_1")
+            self.assertEqual(claimed["task"]["assigned_to"], "reviewer_1")
+            result = service.decide_task(
+                queue["items"][0]["task_id"],
+                {"decision": "pass", "reason": "Evidence is low risk.", "reviewer_id": "reviewer_1"},
+            )
+            self.assertEqual(result["decision"], "pass")
+
+    def test_seed_demo_cases_covers_interview_routing_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = GovernanceService(Path(tmp) / "test.sqlite3")
+            result = service.seed_demo_cases()
+
+            self.assertEqual(result["total"], 5)
+            by_scenario = {item["scenario"]: item for item in result["items"]}
+            self.assertEqual(
+                {
+                    "critical_gambling_block",
+                    "gambling_auto_block",
+                    "drug_violence_auto_block",
+                    "marketing_needs_human_review",
+                    "cooking_auto_pass",
+                },
+                set(by_scenario),
+            )
+            self.assertEqual(by_scenario["critical_gambling_block"]["policy_decision"], "critical_escalate")
+            self.assertEqual(by_scenario["gambling_auto_block"]["policy_decision"], "auto_block")
+            self.assertEqual(by_scenario["drug_violence_auto_block"]["policy_decision"], "auto_block")
+            self.assertEqual(
+                by_scenario["marketing_needs_human_review"]["policy_decision"],
+                "needs_human_review",
+            )
+            self.assertEqual(by_scenario["cooking_auto_pass"]["policy_decision"], "auto_pass")
+            self.assertEqual(by_scenario["marketing_needs_human_review"]["content_status"], "human_review")
+            self.assertIsNotNone(by_scenario["marketing_needs_human_review"]["task_id"])
+            self.assertEqual(service.list_queue()["total"], 1)
 
     def test_local_video_reference_generates_file_features(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -142,7 +185,11 @@ class MvpFlowTest(unittest.TestCase):
             self.assertEqual(result["errors"][0]["index"], 1)
             self.assertEqual(service.list_pipeline_jobs()["total"], 2)
             self.assertEqual(service.drain_pipeline(), 2)
-            self.assertEqual(service.list_queue()["total"], 2)
+            self.assertEqual(service.list_queue()["total"], 0)
+            self.assertEqual(
+                [item["final_decision"] for item in service.list_pipeline_jobs()["items"]],
+                ["pass", "pass"],
+            )
 
     def test_external_modality_model_outputs_are_normalized(self) -> None:
         class ModelHandler(BaseHTTPRequestHandler):
@@ -245,6 +292,75 @@ class MvpFlowTest(unittest.TestCase):
             ["local_heuristic", "local_heuristic", "local_heuristic"],
         )
 
+    def test_tencent_ocr_gateway_outputs_are_normalized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            frame = Path(tmp) / "frame.jpg"
+            frame.write_bytes(b"fake-jpeg-bytes")
+            settings = model_gateway_module.GatewaySettings(
+                ocr_provider="tencent_ocr",
+                tencent_secret_id="sid",
+                tencent_secret_key="skey",
+            )
+            gateway = model_gateway_module.ModelGateway(settings)
+            gateway._call_tencent_ocr_api = lambda _params: {  # type: ignore[method-assign]
+                "RequestId": "req-1",
+                "TextDetections": [
+                    {
+                        "DetectedText": "店铺招牌",
+                        "Confidence": 98,
+                        "Polygon": [{"X": 1, "Y": 2}, {"X": 3, "Y": 4}],
+                    }
+                ],
+            }
+
+            result = gateway.ocr({"frames": [{"frame_id": "frame_001", "thumbnail_path": str(frame)}]})
+
+        self.assertEqual(result["provider"], "tencent_ocr")
+        self.assertEqual(result["items"][0]["text"], "店铺招牌")
+        self.assertEqual(result["items"][0]["confidence"], 0.98)
+        self.assertEqual(result["request_id"], "req-1")
+
+    def test_tencent_asr_gateway_outputs_are_normalized(self) -> None:
+        settings = model_gateway_module.GatewaySettings(
+            asr_provider="tencent_asr",
+            tencent_secret_id="sid",
+            tencent_secret_key="skey",
+        )
+        gateway = model_gateway_module.ModelGateway(settings)
+        captured: dict[str, object] = {}
+
+        def fake_call(params: dict[str, object]) -> dict[str, object]:
+            captured.update(params)
+            return {
+                "RequestId": "asr-req-1",
+                "Result": "腾讯云语音识别欢迎您。",
+                "AudioDuration": 2430,
+            }
+
+        gateway._first_audio_bytes = lambda _payload: (b"fake-wav-bytes", "wav")  # type: ignore[method-assign]
+        gateway._call_tencent_asr_api = fake_call  # type: ignore[method-assign]
+
+        result = gateway.asr({"local_path": "demo.mp4", "video_meta": {"duration_ms": 3000}})
+
+        self.assertEqual(result["provider"], "tencent_asr")
+        self.assertEqual(result["segments"][0]["text"], "腾讯云语音识别欢迎您。")
+        self.assertEqual(result["segments"][0]["end_ms"], 2430)
+        self.assertEqual(result["request_id"], "asr-req-1")
+        self.assertEqual(captured["SourceType"], 1)
+        self.assertEqual(captured["VoiceFormat"], "wav")
+
+    def test_tencent_asr_gateway_rejects_empty_audio(self) -> None:
+        settings = model_gateway_module.GatewaySettings(
+            asr_provider="tencent_asr",
+            tencent_secret_id="sid",
+            tencent_secret_key="skey",
+        )
+        gateway = model_gateway_module.ModelGateway(settings)
+        gateway._first_audio_bytes = lambda _payload: (b"", "wav")  # type: ignore[method-assign]
+
+        with self.assertRaises(model_gateway_module.GatewayError):
+            gateway.asr({"local_path": "empty.wav"})
+
     def test_remote_video_defaults_to_reference_only(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             service = GovernanceService(Path(tmp) / "test.sqlite3")
@@ -284,7 +400,7 @@ class MvpFlowTest(unittest.TestCase):
                 # 通过 Celery chain（eager 同步）驱动整条流水线。
                 tasks_module.dispatch_pipeline(queued["job_id"])
 
-                self.assertEqual(service.list_queue()["total"], 1)
+                self.assertEqual(service.list_queue()["total"], 0)
                 audit = service.get_audit(content_id=queued["content_id"])
                 self.assertEqual(
                     [item["action"] for item in audit["items"]],
@@ -293,7 +409,7 @@ class MvpFlowTest(unittest.TestCase):
                         "pipeline_started",
                         "evidence_extracted",
                         "machine_review_completed",
-                        "human_review_task_created",
+                        "machine_auto_decided",
                     ],
                 )
             finally:

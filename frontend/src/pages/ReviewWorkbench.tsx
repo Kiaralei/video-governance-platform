@@ -1,14 +1,25 @@
-import { useCallback, useEffect, useState } from 'react'
+import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useState } from 'react'
 import {
-  Button, Card, Col, Descriptions, Empty, Input, Row, Space, Table, Tag, Typography, App as AntApp, Statistic,
-} from 'antd'
-import { CheckCircleOutlined, StopOutlined, RightCircleOutlined } from '@ant-design/icons'
+  Button,
+  Card,
+  Input,
+  Message,
+  Popconfirm,
+  Space,
+  Statistic,
+  Table,
+  Tag,
+  Tooltip,
+  Typography,
+} from '@arco-design/web-react'
+import { IconCheckCircle, IconRightCircle, IconStop } from '@arco-design/web-react/icon'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { CaseDetail, DimensionVerdict, ReviewTask } from '../api/types'
+import type { CaseDetail, DimensionVerdict, EvidencePackage, ModalityInvocation, ReviewTask } from '../api/types'
+import { EmptyActionButton, EmptyState } from '../components/EmptyState'
+import { PageHeader } from '../components/PageHeader'
 import { SLACountdown } from '../components/SLACountdown'
-
-const RECO_COLOR: Record<string, string> = { block: 'red', pass: 'green', uncertain: 'gold' }
+import { StatusTag, statusMeta } from '../components/StatusTag'
 
 function VerdictTable({ verdicts }: { verdicts: DimensionVerdict[] }) {
   return (
@@ -16,28 +27,120 @@ function VerdictTable({ verdicts }: { verdicts: DimensionVerdict[] }) {
       size="small"
       rowKey="dimension_id"
       pagination={false}
-      dataSource={verdicts}
+      data={verdicts}
       columns={[
-        { title: '维度', dataIndex: 'dimension_name' },
+        { title: '维度', dataIndex: 'dimension_name', width: 150 },
         {
           title: '判定',
           dataIndex: 'decision',
-          render: (d: string) => (
-            <Tag color={d === 'VIOLATION' ? 'red' : d === 'NO_VIOLATION' ? 'green' : 'gold'}>{d}</Tag>
-          ),
+          width: 128,
+          render: (d) => <StatusTag kind="verdict" value={String(d)} />,
         },
-        { title: '置信度', dataIndex: 'confidence', render: (c: number) => c.toFixed(2) },
+        { title: '置信度', dataIndex: 'confidence', width: 84, align: 'right', render: (c) => <span className="num-cell">{Number(c).toFixed(2)}</span> },
+        {
+          title: '来源',
+          dataIndex: 'source',
+          width: 116,
+          render: (s, row) => <Tag color={s === 'llm' ? 'arcoblue' : 'gray'}>{row.model_version || s}</Tag>,
+        },
         { title: '理由', dataIndex: 'reason', ellipsis: true },
       ]}
     />
   )
 }
 
+function ModalityPanel({ evidence }: { evidence: EvidencePackage }) {
+  const invocations = evidence.modality_model_invocations || []
+  const availability = evidence.modality_availability || {}
+  const rows = ['asr', 'ocr', 'vision'].map((modality) => {
+    const inv = invocations.find((item) => item.modality === modality) as ModalityInvocation | undefined
+    const sourceKey = modality === 'vision' ? 'scene_classification' : modality
+    return {
+      modality,
+      status: inv?.status || 'not_configured',
+      provider: inv?.provider || inv?.model_version || '—',
+      available: availability[sourceKey]?.available,
+      source: availability[sourceKey]?.source || availability[sourceKey]?.mode || '—',
+      error: inv?.error,
+    }
+  })
+
+  return (
+    <Card title="特征提取">
+      <div className="evidence-list">
+        {rows.map((row) => (
+          <div className="evidence-item" key={row.modality}>
+            <div className="status-line">
+              <Tag color="arcoblue">{row.modality.toUpperCase()}</Tag>
+              <StatusTag kind="source" value={row.status} />
+              <StatusTag kind="source" value={row.available ? 'available' : 'fallback'} />
+            </div>
+            <div style={{ marginTop: 6, color: '#6b7785' }}>
+              provider: {row.provider} · source: {row.source}
+            </div>
+            {row.error && <div style={{ marginTop: 4, color: '#f53f3f' }}>{row.error}</div>}
+          </div>
+        ))}
+      </div>
+    </Card>
+  )
+}
+
+function EvidenceTags({ evidence }: { evidence: EvidencePackage }) {
+  return (
+    <Card title="证据标签">
+      <div className="evidence-list">
+        <div>
+          <Typography.Text type="secondary">场景标签</Typography.Text>
+          <div className="status-line" style={{ marginTop: 6 }}>
+            {(evidence.scene_tags || []).slice(0, 8).map((tag) => (
+              <Tag key={tag.tag} color="arcoblue">{tag.tag} {tag.confidence != null ? Number(tag.confidence).toFixed(2) : ''}</Tag>
+            ))}
+            {!evidence.scene_tags?.length && <Tag color="gray">无</Tag>}
+          </div>
+        </div>
+        <div>
+          <Typography.Text type="secondary">物体检测</Typography.Text>
+          <div className="status-line" style={{ marginTop: 6 }}>
+            {(evidence.object_detections || []).slice(0, 8).map((obj, index) => (
+              <Tag key={`${obj.label}-${index}`} color="purple">{obj.label} {obj.confidence != null ? Number(obj.confidence).toFixed(2) : ''}</Tag>
+            ))}
+            {!evidence.object_detections?.length && <Tag color="gray">无</Tag>}
+          </div>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function TextEvidence({ evidence }: { evidence: EvidencePackage }) {
+  return (
+    <Card title="文本证据">
+      <div className="evidence-list">
+        <div className="evidence-item">
+          <Typography.Text type="secondary">ASR</Typography.Text>
+          {(evidence.asr_transcript || []).slice(0, 3).map((item, index) => (
+            <div key={index}>{item.text}</div>
+          ))}
+          {!evidence.asr_transcript?.length && <div>—</div>}
+        </div>
+        <div className="evidence-item">
+          <Typography.Text type="secondary">OCR</Typography.Text>
+          {(evidence.ocr_results || []).slice(0, 5).map((item, index) => (
+            <div key={index}>{item.frame_id || 'frame'}: {item.text}</div>
+          ))}
+          {!evidence.ocr_results?.length && <div>—</div>}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 export function ReviewWorkbench() {
   const qc = useQueryClient()
-  const { message } = AntApp.useApp()
   const [current, setCurrent] = useState<CaseDetail | null>(null)
   const [reason, setReason] = useState('')
+  const [reasonTouched, setReasonTouched] = useState(false)
 
   const queue = useQuery<ReviewTask[]>({
     queryKey: ['queue'],
@@ -51,20 +154,21 @@ export function ReviewWorkbench() {
       if (data.status === 'assigned') {
         setCurrent(data as CaseDetail)
         setReason('')
+        setReasonTouched(false)
       } else if (data.status === 'break_required') {
-        message.warning('已达强制休息阈值，请稍后再领取')
+        Message.warning('已达强制休息阈值，请稍后再领取')
       } else {
-        message.info('暂无待审案件')
+        Message.info('暂无待审案件')
       }
       qc.invalidateQueries({ queryKey: ['queue'] })
     },
-    onError: () => message.error('领取失败'),
+    onError: () => Message.error('领取失败'),
   })
 
   const openCase = useMutation({
     mutationFn: async (taskId: string) => (await api.post(`/review/human/${taskId}/claim`)).data,
-    onSuccess: (data) => { setCurrent(data as CaseDetail); setReason('') },
-    onError: (e: unknown) => message.error(`领取失败：${extractErr(e)}`),
+    onSuccess: (data) => { setCurrent(data as CaseDetail); setReason(''); setReasonTouched(false) },
+    onError: (e: unknown) => Message.error(`领取失败：${extractErr(e)}`),
   })
 
   const decide = useMutation({
@@ -73,106 +177,181 @@ export function ReviewWorkbench() {
     onSuccess: (data) => {
       if (data.golden_test_result) {
         const g = data.golden_test_result
-        message[g.is_correct ? 'success' : 'error'](`黄金题：${g.is_correct ? '答对' : '答错'}（应为 ${g.expected_decision}）`)
+        Message[g.is_correct ? 'success' : 'error'](`黄金题：${g.is_correct ? '答对' : '答错'}（应为 ${g.expected_decision}）`)
       } else {
-        message.success(`已裁定：${data.decision}`)
+        Message.success(`已裁定：${data.decision}`)
       }
       setCurrent(null)
       setReason('')
+      setReasonTouched(false)
       qc.invalidateQueries({ queryKey: ['queue'] })
     },
-    onError: (e: unknown) => message.error(`裁定失败：${extractErr(e)}`),
+    onError: (e: unknown) => Message.error(`裁定失败：${extractErr(e)}`),
   })
 
   const submitDecision = useCallback(
     (decision: 'pass' | 'block') => {
       if (!current) return
-      if (!reason.trim()) { message.warning('请填写裁定理由'); return }
+      if (!reason.trim()) { setReasonTouched(true); Message.warning('请填写裁定理由'); return }
       decide.mutate({ taskId: current.task.task_id, decision })
     },
-    [current, reason, decide, message],
+    [current, reason, decide],
   )
 
-  // 快捷键：P=通过 B=拦截 N=下一个。输入框聚焦时不触发。
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      if (e.key.toLowerCase() === 'p') submitDecision('pass')
-      else if (e.key.toLowerCase() === 'b') submitDecision('block')
-      else if (e.key.toLowerCase() === 'n') fetchNext.mutate()
+      if (e.key.toLowerCase() === 'n') fetchNext.mutate()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [submitDecision, fetchNext])
 
+  const pendingQueue = queue.data || []
+  const highestPriority = pendingQueue.length ? Math.min(...pendingQueue.map((item) => Number(item.priority || 99))) : '—'
+  const missingReason = reasonTouched && !reason.trim()
+
   return (
-    <Row gutter={16}>
-      <Col span={7}>
-        <Card
-          title={`待审队列（${queue.data?.length ?? 0}）`}
-          extra={<Button type="primary" icon={<RightCircleOutlined />} onClick={() => fetchNext.mutate()}>领取下一个 (N)</Button>}
-        >
+    <div className="page-stack">
+      <PageHeader
+        title="人审工作台"
+        description="只处理机器审核无法确定的案件。审核员基于证据独立裁定，通过与拦截都会进入审计链路。"
+        meta={<Space wrap><Tag color="orange">快捷键 N 领取</Tag><Tag color="arcoblue">裁定需二次确认</Tag></Space>}
+        actions={
+        <Button type="primary" icon={<IconRightCircle />} onClick={() => fetchNext.mutate()} loading={fetchNext.isPending}>
+          领取下一个
+        </Button>
+        }
+      />
+
+      <div className="workbench-grid">
+        <Card title={`待审队列 (${queue.data?.length ?? 0})`}>
           <Table<ReviewTask>
             size="small"
             rowKey="task_id"
             loading={queue.isLoading}
-            dataSource={queue.data || []}
+            data={queue.data || []}
             pagination={false}
-            onRow={(r) => ({ onClick: () => openCase.mutate(r.task_id), style: { cursor: 'pointer' } })}
+            noDataElement={
+              <EmptyState
+                title="暂无待审任务"
+                description="明确通过或拦截的内容已由机审终局；只有不确定内容会出现在这里。"
+                action={<EmptyActionButton onClick={() => qc.invalidateQueries({ queryKey: ['queue'] })}>刷新队列</EmptyActionButton>}
+              />
+            }
+            onRow={(r) => ({
+              onClick: () => openCase.mutate(r.task_id),
+              onKeyDown: (e: ReactKeyboardEvent) => {
+                if (e.key === 'Enter' || e.key === ' ') openCase.mutate(r.task_id)
+              },
+              tabIndex: 0,
+              role: 'button',
+              className: 'clickable-row',
+            })}
             columns={[
-              { title: '优先级', dataIndex: 'priority', width: 70, render: (p: number) => <Tag color={p <= 2 ? 'red' : p <= 3 ? 'orange' : 'default'}>{p}</Tag> },
+              { title: '优先级', dataIndex: 'priority', width: 70, render: (p) => <Tag color={Number(p) <= 2 ? 'red' : Number(p) <= 3 ? 'orange' : 'gray'}>{p}</Tag> },
+              { title: '任务状态', dataIndex: 'status', width: 96, render: (s) => <StatusTag kind="task" value={String(s)} /> },
               { title: '标题', dataIndex: 'title', ellipsis: true },
-              { title: '机审', dataIndex: 'machine_recommendation', width: 72, render: (r: string) => <Tag color={RECO_COLOR[r] || 'default'}>{r || '—'}</Tag> },
+              { title: '机审', dataIndex: 'machine_recommendation', width: 82, render: (r) => <StatusTag kind="decision" value={String(r || '')} /> },
             ]}
           />
         </Card>
-      </Col>
-      <Col span={17}>
+
         {!current ? (
-          <Card><Empty description="从左侧队列选择案件，或按 N 领取下一个。快捷键：P 通过 · B 拦截 · N 下一个" /></Card>
-        ) : (
-          <Card
-            title={<Space>一屏决策<Tag color="blue">{current.task.task_id}</Tag>{current.task.is_sensitive && <Tag color="red">敏感</Tag>}</Space>}
-            extra={<SLACountdown deadline={current.task.sla_deadline} />}
-          >
-            <Row gutter={16}>
-              <Col span={14}>
-                <Descriptions size="small" column={1} bordered>
-                  <Descriptions.Item label="标题">{current.content.title}</Descriptions.Item>
-                  <Descriptions.Item label="简介">{current.content.description}</Descriptions.Item>
-                  <Descriptions.Item label="创作者">{current.content.creator_id}</Descriptions.Item>
-                  <Descriptions.Item label="挂载地点">{current.content.poi}</Descriptions.Item>
-                </Descriptions>
-                <Typography.Title level={5} style={{ marginTop: 16 }}>机审维度判定</Typography.Title>
-                <VerdictTable verdicts={current.machine_review.verdicts} />
-              </Col>
-              <Col span={10}>
-                <Card size="small" title="机审建议">
-                  <Statistic
-                    title="推荐"
-                    value={current.machine_review.recommendation || 'uncertain'}
-                    valueStyle={{ color: current.machine_review.recommendation === 'block' ? '#cf1322' : current.machine_review.recommendation === 'pass' ? '#3f8600' : '#d48806' }}
-                  />
-                  <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>{current.machine_review.rationale}</Typography.Paragraph>
-                </Card>
-                <Input.TextArea
-                  style={{ marginTop: 16 }}
-                  rows={4}
-                  placeholder="裁定理由（必填）"
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                />
-                <Space style={{ marginTop: 16 }}>
-                  <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => submitDecision('pass')} loading={decide.isPending}>通过 (P)</Button>
-                  <Button danger icon={<StopOutlined />} onClick={() => submitDecision('block')} loading={decide.isPending}>拦截 (B)</Button>
-                </Space>
-              </Col>
-            </Row>
+          <Card>
+            <div className="ready-panel">
+              <div>
+                <Typography.Title heading={5}>准备领取下一单</Typography.Title>
+                <Typography.Paragraph type="secondary">
+                  当前工作台只展示需人工复核的内容。领取后会锁定案件，并开始 SLA 计时。
+                </Typography.Paragraph>
+              </div>
+              <div className="ready-panel-metrics">
+                <div className="metric-chip"><Typography.Text type="secondary">待审</Typography.Text><div className="num-cell">{pendingQueue.length}</div></div>
+                <div className="metric-chip"><Typography.Text type="secondary">最高优先级</Typography.Text><div className="num-cell">{highestPriority}</div></div>
+                <div className="metric-chip"><Typography.Text type="secondary">当前状态</Typography.Text><div>空闲</div></div>
+              </div>
+              <Button type="primary" icon={<IconRightCircle />} onClick={() => fetchNext.mutate()} loading={fetchNext.isPending}>
+                领取下一单
+              </Button>
+            </div>
           </Card>
+        ) : (
+          <div className="page-stack">
+            <Card
+              title={<Space>案件决策 <Tag color="arcoblue">{current.task.task_id}</Tag>{current.task.is_sensitive && <Tag color="red">敏感</Tag>}</Space>}
+              extra={<SLACountdown deadline={current.task.sla_deadline} />}
+            >
+              <div className="case-grid">
+                <div className="page-stack">
+                  <Card title="内容摘要">
+                    <div className="kv-grid">
+                      <div className="label">标题</div><div>{current.content.title}</div>
+                      <div className="label">简介</div><div>{current.content.description}</div>
+                      <div className="label">创作者</div><div>{current.content.creator_id}</div>
+                      <div className="label">POI</div><div>{current.content.poi}</div>
+                      <div className="label">任务状态</div><div><StatusTag kind="task" value={current.task.status} /></div>
+                    </div>
+                  </Card>
+                  <Card title="机审维度">
+                    <VerdictTable verdicts={current.machine_review.verdicts} />
+                  </Card>
+                  <TextEvidence evidence={current.evidence} />
+                </div>
+                <div className="page-stack">
+                  <Card title="机审建议">
+                    <Statistic
+                      title="推荐动作"
+                      value={statusMeta('decision', current.machine_review.recommendation || 'uncertain').label}
+                      styleValue={{ color: current.machine_review.recommendation === 'block' ? '#f53f3f' : current.machine_review.recommendation === 'pass' ? '#00a870' : '#ff7d00' }}
+                    />
+                    <Typography.Paragraph type="secondary" style={{ marginTop: 8 }}>{current.machine_review.rationale}</Typography.Paragraph>
+                    <div className="status-line">
+                      <Tag color="arcoblue">风险分 {Number(current.machine_review.confidence || 0).toFixed(2)}</Tag>
+                      <Tooltip content="只有 needs_human_review 才会进入此工作台">
+                        <Tag color="orange">人工复核</Tag>
+                      </Tooltip>
+                    </div>
+                  </Card>
+                  <ModalityPanel evidence={current.evidence} />
+                  <EvidenceTags evidence={current.evidence} />
+                  <Card title="裁定">
+                    <Input.TextArea
+                      rows={4}
+                      placeholder="说明依据，例如：未见引流二维码，但口播存在营销导向…"
+                      value={reason}
+                      onChange={(value) => { setReason(value); if (value.trim()) setReasonTouched(false) }}
+                      onBlur={() => setReasonTouched(true)}
+                      aria-label="裁定理由"
+                    />
+                    {missingReason && <div className="inline-error">请先填写裁定理由，便于审计追踪。</div>}
+                    <Space style={{ marginTop: 14 }}>
+                      <Popconfirm
+                        title={`确认通过案件 ${current.task.task_id}？`}
+                        content="通过后内容会进入最终放行状态，并记录裁定理由。"
+                        onOk={() => submitDecision('pass')}
+                        disabled={!reason.trim()}
+                      >
+                        <Button type="primary" icon={<IconCheckCircle />} disabled={!reason.trim()} loading={decide.isPending}>通过</Button>
+                      </Popconfirm>
+                      <Popconfirm
+                        title={`确认拦截案件 ${current.task.task_id}？`}
+                        content="拦截是高影响动作，会写入审计链并影响后续申诉。"
+                        onOk={() => submitDecision('block')}
+                        disabled={!reason.trim()}
+                      >
+                        <Button status="danger" icon={<IconStop />} disabled={!reason.trim()} loading={decide.isPending}>拦截</Button>
+                      </Popconfirm>
+                    </Space>
+                  </Card>
+                </div>
+              </div>
+            </Card>
+          </div>
         )}
-      </Col>
-    </Row>
+      </div>
+    </div>
   )
 }
 

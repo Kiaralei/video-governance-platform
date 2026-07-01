@@ -165,6 +165,18 @@ $env:MODEL_GATEWAY_VISION_PROVIDER="azure_vision"
 $env:AZURE_VISION_ENDPOINT="https://<your-resource>.cognitiveservices.azure.com"
 $env:AZURE_VISION_KEY="<your-key>"
 
+# ASR/OCR 接腾讯云语音识别和文字识别
+$env:MODEL_GATEWAY_ASR_PROVIDER="tencent_asr"
+$env:MODEL_GATEWAY_OCR_PROVIDER="tencent_ocr"
+$env:TENCENTCLOUD_SECRET_ID="<your-secret-id>"
+$env:TENCENTCLOUD_SECRET_KEY="<your-secret-key>"
+$env:TENCENTCLOUD_REGION="ap-guangzhou"
+$env:TENCENT_ASR_ENGINE="16k_zh"
+$env:TENCENT_ASR_VOICE_FORMAT="wav"
+$env:TENCENT_OCR_ACTION="GeneralBasicOCR"
+# 如果 ffmpeg 没有进入 PATH，短视频 ASR 抽音频时需要显式指定
+$env:MODEL_GATEWAY_FFMPEG_PATH="D:\Github\video-governance-platform\.cache\ffmpeg\ffmpeg-8.1.1-essentials_build\bin\ffmpeg.exe"
+
 # 或者转发到任意自定义 ASR/OCR/Vision HTTP 服务
 $env:MODEL_GATEWAY_ASR_PROVIDER="upstream"
 $env:MODEL_GATEWAY_ASR_UPSTREAM_URL="http://127.0.0.1:9101/asr"

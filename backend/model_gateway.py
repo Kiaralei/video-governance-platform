@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
 import re
+import shutil
 import sys
+import subprocess
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,6 +39,20 @@ class GatewaySettings:
     azure_vision_endpoint: str = os.environ.get("AZURE_VISION_ENDPOINT", "")
     azure_vision_key: str = os.environ.get("AZURE_VISION_KEY", "")
     azure_vision_api_version: str = os.environ.get("AZURE_VISION_API_VERSION", "2024-02-01")
+    tencent_secret_id: str = os.environ.get("TENCENTCLOUD_SECRET_ID", "")
+    tencent_secret_key: str = os.environ.get("TENCENTCLOUD_SECRET_KEY", "")
+    tencent_region: str = os.environ.get("TENCENTCLOUD_REGION", "ap-guangzhou")
+    tencent_asr_endpoint: str = os.environ.get("TENCENT_ASR_ENDPOINT", "https://asr.tencentcloudapi.com")
+    tencent_asr_action: str = os.environ.get("TENCENT_ASR_ACTION", "SentenceRecognition")
+    tencent_asr_version: str = os.environ.get("TENCENT_ASR_VERSION", "2019-06-14")
+    tencent_asr_engine: str = os.environ.get("TENCENT_ASR_ENGINE", "16k_zh")
+    tencent_asr_voice_format: str = os.environ.get("TENCENT_ASR_VOICE_FORMAT", "wav")
+    tencent_asr_word_info: int = int(os.environ.get("TENCENT_ASR_WORD_INFO", "0"))
+    tencent_asr_max_base64_bytes: int = int(os.environ.get("TENCENT_ASR_MAX_BASE64_BYTES", "3145728"))
+    tencent_ocr_endpoint: str = os.environ.get("TENCENT_OCR_ENDPOINT", "https://ocr.tencentcloudapi.com")
+    tencent_ocr_action: str = os.environ.get("TENCENT_OCR_ACTION", "GeneralBasicOCR")
+    tencent_ocr_version: str = os.environ.get("TENCENT_OCR_VERSION", "2018-11-19")
+    ffmpeg_path: str = os.environ.get("MODEL_GATEWAY_FFMPEG_PATH") or os.environ.get("VGP_FFMPEG_PATH") or ""
 
 
 def gateway_settings() -> GatewaySettings:
@@ -53,11 +75,15 @@ class ModelGateway:
                 "vision": self.settings.vision_provider,
             },
             "azure_vision_configured": bool(self.settings.azure_vision_endpoint and self.settings.azure_vision_key),
+            "tencent_asr_configured": bool(self.settings.tencent_secret_id and self.settings.tencent_secret_key),
+            "tencent_ocr_configured": bool(self.settings.tencent_secret_id and self.settings.tencent_secret_key),
         }
 
     def asr(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.settings.asr_upstream_url or self.settings.asr_provider == "upstream":
             return self._call_upstream(self.settings.asr_upstream_url, payload)
+        if self.settings.asr_provider in {"tencent", "tencent_asr"}:
+            return self._tencent_asr(payload)
         return self._local_asr(payload)
 
     def ocr(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -65,6 +91,8 @@ class ModelGateway:
             return self._call_upstream(self.settings.ocr_upstream_url, payload)
         if self.settings.ocr_provider in {"azure", "azure_vision"}:
             return self._azure_ocr(payload)
+        if self.settings.ocr_provider in {"tencent", "tencent_ocr"}:
+            return self._tencent_ocr(payload)
         return self._local_ocr(payload)
 
     def vision(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -163,6 +191,44 @@ class ModelGateway:
             ],
         }
 
+    def _tencent_asr(self, payload: dict[str, Any]) -> dict[str, Any]:
+        audio_bytes, voice_format = self._first_audio_bytes(payload)
+        if not audio_bytes:
+            raise GatewayError("Tencent ASR audio payload is empty", HTTPStatus.BAD_REQUEST)
+        encoded = base64.b64encode(audio_bytes).decode("ascii")
+        if len(encoded.encode("ascii")) > self.settings.tencent_asr_max_base64_bytes:
+            raise GatewayError(
+                "Tencent ASR audio payload exceeds the SentenceRecognition size limit",
+                HTTPStatus.BAD_REQUEST,
+            )
+
+        params = {
+            "SubServiceType": 2,
+            "ProjectId": 0,
+            "EngSerViceType": self.settings.tencent_asr_engine,
+            "VoiceFormat": voice_format,
+            "SourceType": 1,
+            "Data": encoded,
+            "DataLen": len(audio_bytes),
+        }
+        if self.settings.tencent_asr_word_info:
+            params["WordInfo"] = self.settings.tencent_asr_word_info
+
+        data = self._call_tencent_asr_api(params)
+        text = str(data.get("Result") or "").strip()
+        word_list = data.get("WordList") if isinstance(data.get("WordList"), list) else []
+        if not text and word_list:
+            text = "".join(str(item.get("Word", "")) for item in word_list if isinstance(item, dict)).strip()
+        duration_ms = self._int_value(data.get("AudioDuration"), self._duration_hint(payload))
+        segments = [{"start_ms": 0, "end_ms": duration_ms, "text": text}] if text else []
+        return {
+            "model_version": f"tencent-asr-{self.settings.tencent_asr_engine}",
+            "provider": "tencent_asr",
+            "segments": segments,
+            "raw_provider_status": "completed",
+            "request_id": data.get("RequestId", ""),
+        }
+
     def _azure_ocr(self, payload: dict[str, Any]) -> dict[str, Any]:
         analysis = self._call_azure_image_analysis(payload, features=("read",))
         items: list[dict[str, Any]] = []
@@ -227,6 +293,168 @@ class ModelGateway:
             "raw_provider_status": "completed",
         }
 
+    def _tencent_ocr(self, payload: dict[str, Any]) -> dict[str, Any]:
+        image_bytes, _content_type = self._first_image_bytes(payload)
+        if not image_bytes:
+            raise GatewayError("no extracted frame image is available for Tencent OCR", HTTPStatus.BAD_REQUEST)
+
+        params = {
+            "ImageBase64": base64.b64encode(image_bytes).decode("ascii"),
+        }
+        data = self._call_tencent_ocr_api(params)
+        detections = data.get("TextDetections") if isinstance(data, dict) else []
+        items: list[dict[str, Any]] = []
+        for detection in detections or []:
+            if not isinstance(detection, dict):
+                continue
+            text = detection.get("DetectedText")
+            if not text:
+                continue
+            items.append(
+                {
+                    "frame_id": "frame_001",
+                    "text": str(text),
+                    "confidence": self._confidence_value(detection.get("Confidence"), 0.0),
+                    "bbox": detection.get("Polygon") or detection.get("ItemPolygon") or [],
+                }
+            )
+        return {
+            "model_version": f"tencent-ocr-{self.settings.tencent_ocr_action}",
+            "provider": "tencent_ocr",
+            "items": items,
+            "raw_provider_status": "completed",
+            "request_id": data.get("RequestId", ""),
+        }
+
+    def _call_tencent_asr_api(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._call_tencent_api(
+            params=params,
+            endpoint=self.settings.tencent_asr_endpoint,
+            service="asr",
+            action=self.settings.tencent_asr_action,
+            version=self.settings.tencent_asr_version,
+            region=self.settings.tencent_region,
+            product_name="ASR",
+        )
+
+    def _call_tencent_ocr_api(self, params: dict[str, Any]) -> dict[str, Any]:
+        return self._call_tencent_api(
+            params=params,
+            endpoint=self.settings.tencent_ocr_endpoint,
+            service="ocr",
+            action=self.settings.tencent_ocr_action,
+            version=self.settings.tencent_ocr_version,
+            region=self.settings.tencent_region,
+            product_name="OCR",
+        )
+
+    def _call_tencent_api(
+        self,
+        *,
+        params: dict[str, Any],
+        endpoint: str,
+        service: str,
+        action: str,
+        version: str,
+        region: str,
+        product_name: str,
+    ) -> dict[str, Any]:
+        if not self.settings.tencent_secret_id or not self.settings.tencent_secret_key:
+            raise GatewayError(f"Tencent {product_name} secret id/key are not configured", HTTPStatus.BAD_GATEWAY)
+
+        endpoint = endpoint.rstrip("/")
+        host = urllib.parse.urlparse(endpoint).netloc or f"{service}.tencentcloudapi.com"
+        timestamp = int(time.time())
+        date = datetime.fromtimestamp(timestamp, tz=timezone.utc).strftime("%Y-%m-%d")
+        payload = json.dumps(params, ensure_ascii=False, separators=(",", ":"))
+
+        authorization = self._tencent_authorization(
+            payload=payload,
+            host=host,
+            service=service,
+            timestamp=timestamp,
+            date=date,
+        )
+        headers = {
+            "Authorization": authorization,
+            "Content-Type": "application/json; charset=utf-8",
+            "Host": host,
+            "X-TC-Action": action,
+            "X-TC-Timestamp": str(timestamp),
+            "X-TC-Version": version,
+        }
+        if region:
+            headers["X-TC-Region"] = region
+        request = urllib.request.Request(endpoint, data=payload.encode("utf-8"), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=self.settings.timeout_seconds) as response:
+                body = response.read().decode("utf-8")
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise GatewayError(f"Tencent {product_name} request failed: {exc}", HTTPStatus.BAD_GATEWAY) from exc
+        try:
+            raw = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise GatewayError(f"Tencent {product_name} returned invalid JSON", HTTPStatus.BAD_GATEWAY) from exc
+        if not isinstance(raw, dict):
+            raise GatewayError(f"Tencent {product_name} JSON response must be an object", HTTPStatus.BAD_GATEWAY)
+        response = raw.get("Response", raw)
+        if not isinstance(response, dict):
+            raise GatewayError(f"Tencent {product_name} response payload must be an object", HTTPStatus.BAD_GATEWAY)
+        if isinstance(response.get("Error"), dict):
+            error = response["Error"]
+            code = error.get("Code", "Unknown")
+            message = error.get("Message", "")
+            raise GatewayError(f"Tencent {product_name} error {code}: {message}", HTTPStatus.BAD_GATEWAY)
+        return response
+
+    def _tencent_authorization(
+        self,
+        *,
+        payload: str,
+        host: str,
+        service: str,
+        timestamp: int,
+        date: str,
+    ) -> str:
+        algorithm = "TC3-HMAC-SHA256"
+        canonical_headers = (
+            "content-type:application/json; charset=utf-8\n"
+            f"host:{host}\n"
+        )
+        signed_headers = "content-type;host"
+        hashed_payload = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        canonical_request = "\n".join(
+            [
+                "POST",
+                "/",
+                "",
+                canonical_headers,
+                signed_headers,
+                hashed_payload,
+            ]
+        )
+        credential_scope = f"{date}/{service}/tc3_request"
+        string_to_sign = "\n".join(
+            [
+                algorithm,
+                str(timestamp),
+                credential_scope,
+                hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+            ]
+        )
+        secret_date = hmac.new(
+            ("TC3" + self.settings.tencent_secret_key).encode("utf-8"),
+            date.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        secret_service = hmac.new(secret_date, service.encode("utf-8"), hashlib.sha256).digest()
+        secret_signing = hmac.new(secret_service, b"tc3_request", hashlib.sha256).digest()
+        signature = hmac.new(secret_signing, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+        return (
+            f"{algorithm} Credential={self.settings.tencent_secret_id}/{credential_scope}, "
+            f"SignedHeaders={signed_headers}, Signature={signature}"
+        )
+
     def _call_azure_image_analysis(self, payload: dict[str, Any], features: tuple[str, ...]) -> dict[str, Any]:
         if not self.settings.azure_vision_endpoint or not self.settings.azure_vision_key:
             raise GatewayError("Azure Vision endpoint/key are not configured", HTTPStatus.BAD_GATEWAY)
@@ -273,6 +501,63 @@ class ModelGateway:
                 return path.read_bytes(), content_type
         return b"", "application/octet-stream"
 
+    def _first_audio_bytes(self, payload: dict[str, Any]) -> tuple[bytes, str]:
+        for key in ("audio_path", "local_path", "path"):
+            value = payload.get(key)
+            if not value:
+                continue
+            path = Path(str(value))
+            if not path.is_file():
+                continue
+            voice_format = self._voice_format_for_path(path)
+            if voice_format:
+                return path.read_bytes(), voice_format
+            return self._extract_audio_for_asr(path)
+        raise GatewayError("no local media file is available for Tencent ASR", HTTPStatus.BAD_REQUEST)
+
+    def _extract_audio_for_asr(self, source: Path) -> tuple[bytes, str]:
+        voice_format = self.settings.tencent_asr_voice_format.lower().strip() or "wav"
+        if voice_format not in {"wav", "mp3", "m4a", "aac"}:
+            raise GatewayError(f"unsupported Tencent ASR extraction format: {voice_format}", HTTPStatus.BAD_REQUEST)
+        ffmpeg = self.settings.ffmpeg_path or shutil.which("ffmpeg")
+        if not ffmpeg:
+            raise GatewayError("ffmpeg is required to extract audio for Tencent ASR", HTTPStatus.BAD_REQUEST)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / f"asr_audio.{voice_format}"
+            command = [
+                ffmpeg,
+                "-y",
+                "-loglevel",
+                "error",
+                "-i",
+                str(source),
+                "-vn",
+                "-t",
+                "60",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                str(target),
+            ]
+            try:
+                completed = subprocess.run(command, capture_output=True, text=True, timeout=90, check=False)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise GatewayError(f"ffmpeg failed to extract audio for Tencent ASR: {exc}", HTTPStatus.BAD_REQUEST) from exc
+            if completed.returncode != 0 or not target.is_file():
+                detail = (completed.stderr or "unknown ffmpeg error").strip()
+                raise GatewayError(f"ffmpeg could not extract audio for Tencent ASR: {detail}", HTTPStatus.BAD_REQUEST)
+            return target.read_bytes(), voice_format
+
+    def _voice_format_for_path(self, path: Path) -> str:
+        suffix = path.suffix.lower().lstrip(".")
+        if suffix in {"wav", "pcm", "speex", "silk", "mp3", "m4a", "aac", "amr"}:
+            return suffix
+        if suffix in {"ogg", "opus"}:
+            return "ogg-opus"
+        return ""
+
     def _content_metadata(self, payload: dict[str, Any]) -> dict[str, str]:
         value = payload.get("content_metadata")
         return value if isinstance(value, dict) else {}
@@ -299,6 +584,18 @@ class ModelGateway:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    def _int_value(self, value: Any, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _confidence_value(self, value: Any, default: float) -> float:
+        confidence = self._float_value(value, default)
+        if confidence > 1:
+            confidence = confidence / 100
+        return min(max(confidence, 0.0), 1.0)
 
     def _slug(self, value: str) -> str:
         slug = re.sub(r"[^a-zA-Z0-9_ -]+", "", value.strip().lower())
