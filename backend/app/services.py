@@ -22,6 +22,7 @@ from .decision_engine import DecisionEngineService, StrategyRegistry
 from .decision_engine.types import VALID_STATUS_TRANSITIONS, DimensionStatus
 from .evidence import EvidenceExtractor
 from .llm_review import is_llm_configured
+from .quality import FlywheelSource, classify_sample, fleiss_kappa, passes_quality_gate
 from .realtime import hub
 from .review_workflow import DECISION_PRIORITY, QueuePriority, ReviewStatus, can_transition
 from .auth import hash_password, verify_password
@@ -32,6 +33,7 @@ from .models import (
     DeadLetterTask,
     DimensionRegistry,
     EvidencePackage,
+    FlywheelSample,
     HumanReviewTask,
     MachineReview,
     MediaAsset,
@@ -109,6 +111,7 @@ class GovernanceService:
             for model in (
                 DeadLetterTask,
                 AuditLog,
+                FlywheelSample,
                 AppealCase,
                 HumanReviewTask,
                 MachineReview,
@@ -964,10 +967,28 @@ class GovernanceService:
                     HumanReviewTask.status == ReviewStatus.IN_REVIEW.value,
                 )
             ).scalar_one()
+            golden_total = session.execute(
+                select(func.count()).select_from(HumanReviewTask).where(
+                    HumanReviewTask.assigned_to == reviewer_id,
+                    HumanReviewTask.status == DECIDED,
+                    HumanReviewTask.is_golden.is_(True),
+                )
+            ).scalar_one()
+            golden_correct = session.execute(
+                select(func.count()).select_from(HumanReviewTask).where(
+                    HumanReviewTask.assigned_to == reviewer_id,
+                    HumanReviewTask.status == DECIDED,
+                    HumanReviewTask.is_golden.is_(True),
+                    HumanReviewTask.decision == HumanReviewTask.golden_expected_decision,
+                )
+            ).scalar_one()
         return {
             "reviewer_id": reviewer_id,
             "total_decided": total_decided,
             "in_progress": in_progress,
+            "golden_total": golden_total,
+            "golden_correct": golden_correct,
+            "golden_accuracy": round(golden_correct / golden_total, 4) if golden_total else None,
             "csam_exposure_shift": self._csam_exposure_count(reviewer_id, settings.shift_window_seconds, now),
             "csam_exposure_week": self._csam_exposure_count(reviewer_id, settings.week_window_seconds, now),
             "decided_last_hour": self._recent_decision_count(reviewer_id, settings.forced_break_window_seconds, now),
@@ -1023,12 +1044,101 @@ class GovernanceService:
                 action="human_decision_submitted",
                 detail={"decision": decision, "reason": reason},
             )
+
+            # Stage 8：黄金题同步评估 + 数据回流样本落库。
+            machine = session.execute(
+                select(MachineReview).where(MachineReview.content_id == content_id)
+            ).scalar_one_or_none()
+            machine_rec = machine.recommendation if machine else ""
+            policy_version, rule_version = self._decision_versions(machine)
+            golden_result = self._evaluate_and_record_golden(
+                session, task, decision, timestamp
+            )
+            self._record_flywheel_sample(
+                session, content_id, machine_rec, decision, golden_result,
+                policy_version, rule_version, timestamp,
+            )
         hub.publish_to_role(
             "senior_reviewer",
             "task_decided",
             {"task_id": task_id, "content_id": content_id, "decision": decision},
         )
-        return {"task_id": task_id, "status": DECIDED, "decision": decision}
+        result = {"task_id": task_id, "status": DECIDED, "decision": decision}
+        if golden_result is not None:
+            result["golden_test_result"] = golden_result
+        return result
+
+    @staticmethod
+    def _decision_versions(machine: MachineReview | None) -> tuple[str, str]:
+        if machine is None or not machine.decision_summary_json:
+            return "", ""
+        try:
+            summary = loads(machine.decision_summary_json)
+        except (ValueError, TypeError):
+            return "", ""
+        return summary.get("policy_version", ""), summary.get("rule_version", "")
+
+    def _evaluate_and_record_golden(
+        self, session: Session, task: HumanReviewTask, decision: str, timestamp: str
+    ) -> dict[str, Any] | None:
+        if not task.is_golden:
+            return None
+        expected = task.golden_expected_decision
+        is_correct = decision == expected
+        self._append_audit(
+            session, content_id=task.content_id, task_id=task.id, actor="system",
+            action="golden_test_evaluated",
+            detail={"expected": expected, "actual": decision, "is_correct": is_correct},
+        )
+        return {
+            "is_golden_test": True,
+            "is_correct": is_correct,
+            "expected_decision": expected,
+            "reviewer_decision": decision,
+        }
+
+    def _record_flywheel_sample(
+        self,
+        session: Session,
+        content_id: str,
+        machine_rec: str,
+        human_decision: str,
+        golden_result: dict[str, Any] | None,
+        policy_version: str,
+        rule_version: str,
+        timestamp: str,
+        *,
+        source_override: str | None = None,
+        is_correction: bool = False,
+    ) -> None:
+        if golden_result is not None:
+            source_type = FlywheelSource.GOLDEN.value
+            error_type = ""
+            gate = passes_quality_gate(source_type, golden_result["is_correct"])
+        elif source_override is not None:
+            source_type = source_override
+            error_type = ""
+            gate = passes_quality_gate(source_type, None)
+        else:
+            source_type, error_type = classify_sample(machine_rec, human_decision)
+            gate = passes_quality_gate(source_type, None)
+        session.add(
+            FlywheelSample(
+                id=new_id("fw"),
+                source_type=source_type,
+                content_id=content_id,
+                dimension_id="overall",
+                machine_decision=machine_rec or "",
+                human_decision=human_decision or "",
+                final_decision=human_decision or "",
+                error_type=error_type,
+                policy_version=policy_version,
+                rule_version=rule_version,
+                quality_gate_passed=gate,
+                is_correction=is_correction,
+                created_at=timestamp,
+            )
+        )
 
     def record_dead_letter(
         self,
@@ -1264,6 +1374,16 @@ class GovernanceService:
                         session, content_id=content_id, task_id=None, actor="system",
                         action=chain_action, detail={"appeal_id": appeal_id, **chain_detail},
                     )
+                # 恢复连锁 ④改判样本回流：落一条 correction 样本供数据飞轮消费。
+                machine = session.execute(
+                    select(MachineReview).where(MachineReview.content_id == content_id)
+                ).scalar_one_or_none()
+                policy_version, rule_version = self._decision_versions(machine)
+                self._record_flywheel_sample(
+                    session, content_id, machine.recommendation if machine else "",
+                    new_decision, None, policy_version, rule_version, timestamp,
+                    source_override="correction", is_correction=True,
+                )
                 recovery = {
                     "visibility_restored": True,
                     "penalty_rolled_back": True,
@@ -1595,6 +1715,134 @@ class GovernanceService:
             )
         return {"version_id": version_id, "status": "active"}
 
+    # --- Stage 8：质检 + 数据回流 --------------------------------------------
+
+    def mark_golden(self, task_id: str, expected_decision: str) -> dict[str, Any]:
+        """把一个待审任务注入为黄金题（已知答案，用于校准审核员）。"""
+        expected_decision = str(expected_decision).lower().strip()
+        if expected_decision not in {PASS, BLOCK}:
+            raise ValidationError("黄金题答案只能是 pass 或 block")
+        timestamp = now_iso()
+        with self._session_factory.begin() as session:
+            task = session.get(HumanReviewTask, task_id, with_for_update=True)
+            if task is None:
+                raise NotFoundError("任务不存在")
+            if task.status == DECIDED:
+                raise ConflictError("已裁定任务不能再注入黄金题")
+            task.is_golden = True
+            task.golden_expected_decision = expected_decision
+            task.updated_at = timestamp
+        return {"task_id": task_id, "is_golden": True, "expected_decision": expected_decision}
+
+    def list_flywheel_samples(
+        self, source_type: str | None = None, only_passed: bool = False,
+        offset: int = 0, limit: int = 50,
+    ) -> dict[str, Any]:
+        offset = max(0, offset)
+        limit = min(max(1, limit), 500)
+        with self._session_factory() as session:
+            stmt = select(FlywheelSample)
+            count_stmt = select(func.count()).select_from(FlywheelSample)
+            if source_type:
+                stmt = stmt.where(FlywheelSample.source_type == source_type)
+                count_stmt = count_stmt.where(FlywheelSample.source_type == source_type)
+            if only_passed:
+                stmt = stmt.where(FlywheelSample.quality_gate_passed.is_(True))
+                count_stmt = count_stmt.where(FlywheelSample.quality_gate_passed.is_(True))
+            total = session.execute(count_stmt).scalar_one()
+            rows = session.execute(
+                stmt.order_by(FlywheelSample.created_at.asc()).limit(limit).offset(offset)
+            ).scalars().all()
+        return {"items": [self._flywheel_summary(r) for r in rows], "total": total, "offset": offset, "limit": limit}
+
+    def export_flywheel_jsonl(self, only_passed: bool = True) -> str:
+        """导出回流样本为 JSONL（每行一个 JSON 对象）。默认只导出过质量门的样本。"""
+        with self._session_factory() as session:
+            stmt = select(FlywheelSample).order_by(FlywheelSample.created_at.asc())
+            if only_passed:
+                stmt = stmt.where(FlywheelSample.quality_gate_passed.is_(True))
+            rows = session.execute(stmt).scalars().all()
+        return "\n".join(dumps(self._flywheel_summary(r)) for r in rows)
+
+    def quality_summary(self) -> dict[str, Any]:
+        with self._session_factory() as session:
+            source_counts = {
+                src: cnt
+                for src, cnt in session.execute(
+                    select(FlywheelSample.source_type, func.count()).group_by(FlywheelSample.source_type)
+                ).all()
+            }
+            total_samples = session.execute(select(func.count()).select_from(FlywheelSample)).scalar_one()
+            passed_samples = session.execute(
+                select(func.count()).select_from(FlywheelSample).where(
+                    FlywheelSample.quality_gate_passed.is_(True)
+                )
+            ).scalar_one()
+            golden_total = source_counts.get(FlywheelSource.GOLDEN.value, 0)
+            golden_correct = session.execute(
+                select(func.count()).select_from(FlywheelSample).where(
+                    FlywheelSample.source_type == FlywheelSource.GOLDEN.value,
+                    FlywheelSample.quality_gate_passed.is_(True),
+                )
+            ).scalar_one()
+            disagreements = source_counts.get(FlywheelSource.DISAGREEMENT.value, 0)
+            appeals_total = session.execute(select(func.count()).select_from(AppealCase)).scalar_one()
+            overturned = session.execute(
+                select(func.count()).select_from(AppealCase).where(
+                    AppealCase.status == AppealStatus.OVERTURNED.value
+                )
+            ).scalar_one()
+        # 推翻率分母只取经 classify_sample 分类的样本（ground_truth + disagreement），
+        # 与分子口径一致 —— 排除 golden/correction，避免系统性偏低。
+        classified = disagreements + source_counts.get(FlywheelSource.GROUND_TRUTH.value, 0)
+        override_rate = round(disagreements / classified, 4) if classified else 0.0
+        overturn_rate = round(overturned / appeals_total, 4) if appeals_total else 0.0
+        golden_accuracy = round(golden_correct / golden_total, 4) if golden_total else None
+        return {
+            "flywheel_by_source": source_counts,
+            "total_samples": total_samples,
+            "passed_quality_gate": passed_samples,
+            "golden": {"total": golden_total, "correct": golden_correct, "accuracy": golden_accuracy},
+            "human_override_rate": override_rate,
+            "appeal_overturn_rate": overturn_rate,
+            "irr": self.compute_irr(),
+        }
+
+    def compute_irr(self) -> dict[str, Any]:
+        """评估者间信度：按 content 汇总多方裁定（人审 + 申诉改判）计算 Fleiss' Kappa。"""
+        ratings_by_content: dict[str, list[str]] = {}
+        with self._session_factory() as session:
+            for content_id, decision in session.execute(
+                select(HumanReviewTask.content_id, HumanReviewTask.decision).where(
+                    HumanReviewTask.status == DECIDED, HumanReviewTask.decision.isnot(None)
+                )
+            ).all():
+                ratings_by_content.setdefault(content_id, []).append(decision)
+            for content_id, resolved in session.execute(
+                select(AppealCase.content_id, AppealCase.resolved_decision).where(
+                    AppealCase.resolved_decision.isnot(None)
+                )
+            ).all():
+                ratings_by_content.setdefault(content_id, []).append(resolved)
+        return fleiss_kappa(list(ratings_by_content.values()), categories=[PASS, BLOCK])
+
+    def _flywheel_summary(self, row: FlywheelSample) -> dict[str, Any]:
+        return {
+            "sample_id": row.id,
+            "source_type": row.source_type,
+            "content_id": row.content_id,
+            "dimension_id": row.dimension_id,
+            "machine_decision": row.machine_decision,
+            "human_decision": row.human_decision,
+            "final_decision": row.final_decision,
+            "error_type": row.error_type,
+            "policy_version": row.policy_version,
+            "rule_version": row.rule_version,
+            "quality_gate_passed": row.quality_gate_passed,
+            "is_correction": row.is_correction,
+            "created_at": row.created_at,
+        }
+
     # --- 用户 / 认证 ---------------------------------------------------------
 
     def register_user(self, username: str, password: str, roles: list[str]) -> dict[str, Any]:
@@ -1652,6 +1900,7 @@ class GovernanceService:
             ("policy_pm_demo", ["policy_pm"]),
             ("policy_approver_demo", ["policy_approver"]),
             ("appeal_demo", ["appeal_reviewer"]),
+            ("qa_demo", ["qa_reviewer"]),
         ]
         created: list[dict[str, Any]] = []
         for username, roles in demo:

@@ -183,12 +183,40 @@ class HumanReviewTask(Base):
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     is_sensitive: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     jurisdiction: Mapped[str] = mapped_column(String, nullable=False, default="global")
+    # Stage 8：黄金题注入。
+    is_golden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    golden_expected_decision: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
 
     __table_args__ = (
         Index("idx_human_review_tasks_status_created", "status", "created_at"),
         Index("idx_human_review_tasks_queue", "status", "priority", "sla_deadline", "created_at"),
+    )
+
+
+class FlywheelSample(Base):
+    """数据回流样本（Stage 8）。四类：ground_truth/disagreement/golden/correction。"""
+
+    __tablename__ = "flywheel_samples"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source_type: Mapped[str] = mapped_column(String, nullable=False)
+    content_id: Mapped[str] = mapped_column(String, nullable=False)
+    dimension_id: Mapped[str] = mapped_column(String, nullable=False, default="overall")
+    machine_decision: Mapped[str] = mapped_column(String, nullable=False, default="")
+    human_decision: Mapped[str] = mapped_column(String, nullable=False, default="")
+    final_decision: Mapped[str] = mapped_column(String, nullable=False)
+    error_type: Mapped[str] = mapped_column(String, nullable=False, default="")  # overkill/miss
+    policy_version: Mapped[str] = mapped_column(String, nullable=False, default="")
+    rule_version: Mapped[str] = mapped_column(String, nullable=False, default="")
+    quality_gate_passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    is_correction: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+
+    __table_args__ = (
+        Index("idx_flywheel_source", "source_type"),
+        Index("idx_flywheel_content", "content_id"),
     )
 
 

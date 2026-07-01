@@ -48,6 +48,9 @@ ENDPOINT_PERMISSIONS: dict[str, set[Role]] = {
     # Stage 7：申诉闭环。二审排除原审由服务层按账号 ID 强校验。
     "appeal.read": {Role.APPEAL_REVIEWER, Role.REVIEWER_T3, Role.SENIOR_REVIEWER, Role.COMPLIANCE_AUDITOR},
     "appeal.decide": {Role.APPEAL_REVIEWER, Role.REVIEWER_T3},
+    # Stage 8：质检 + 数据回流。
+    "quality.read": {Role.QA_REVIEWER, Role.OPS_ADMIN, Role.COMPLIANCE_AUDITOR, Role.POLICY_PM},
+    "quality.write": {Role.QA_REVIEWER, Role.OPS_ADMIN},
 }
 
 

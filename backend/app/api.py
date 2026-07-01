@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .auth import (
@@ -88,6 +88,7 @@ evidence_router = APIRouter(prefix="/api/v1", tags=["evidence"])
 human_router = APIRouter(prefix="/api/v1/review/human", tags=["human_review"])
 reviewers_router = APIRouter(prefix="/api/v1/reviewers", tags=["reviewers"])
 appeal_router = APIRouter(prefix="/api/v1/appeal", tags=["appeal"])
+quality_router = APIRouter(prefix="/api/v1/quality", tags=["quality"])
 policy_router = APIRouter(prefix="/api/v1/policy", tags=["policy"])
 dev_router = APIRouter(prefix="/api/v1/dev", tags=["dev"])
 
@@ -327,6 +328,46 @@ def decide_appeal(
     return _service(request).decide_appeal(appeal_id, user.user_id, payload.outcome, payload.reason)
 
 
+# --- quality / 质检 + 数据回流（Stage 8） ------------------------------------
+
+@quality_router.get("/summary", dependencies=[Depends(require_permission("quality.read"))])
+def quality_summary(request: Request) -> dict[str, Any]:
+    return _service(request).quality_summary()
+
+
+@quality_router.get("/irr", dependencies=[Depends(require_permission("quality.read"))])
+def quality_irr(request: Request) -> dict[str, Any]:
+    return _service(request).compute_irr()
+
+
+@quality_router.get("/flywheel", dependencies=[Depends(require_permission("quality.read"))])
+def list_flywheel(
+    request: Request, source_type: Optional[str] = None, only_passed: bool = False,
+    offset: int = 0, limit: int = 50,
+) -> dict[str, Any]:
+    return _service(request).list_flywheel_samples(
+        source_type=source_type, only_passed=only_passed, offset=offset, limit=limit
+    )
+
+
+@quality_router.get(
+    "/flywheel/export", dependencies=[Depends(require_permission("quality.read"))]
+)
+def export_flywheel(request: Request, only_passed: bool = True) -> PlainTextResponse:
+    body = _service(request).export_flywheel_jsonl(only_passed=only_passed)
+    return PlainTextResponse(content=body, media_type="application/x-ndjson")
+
+
+@quality_router.post("/golden/{task_id}")
+def mark_golden(
+    request: Request,
+    task_id: str,
+    expected_decision: str,
+    user: Principal = Depends(require_permission("quality.write")),
+) -> dict[str, Any]:
+    return _service(request).mark_golden(task_id, expected_decision)
+
+
 # --- policy / 策略维度管理（Stage 4） ----------------------------------------
 
 @policy_router.get("/dimensions", dependencies=[Depends(require_permission("policy.read"))])
@@ -468,6 +509,7 @@ _ROUTERS = (
     human_router,
     reviewers_router,
     appeal_router,
+    quality_router,
     policy_router,
     dev_router,
 )
