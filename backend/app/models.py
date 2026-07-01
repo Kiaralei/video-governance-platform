@@ -174,6 +174,11 @@ class HumanReviewTask(Base):
     decision: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     decided_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    # Stage 5：案件锁 + SLA。
+    locked_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    lock_expires_at: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    sla_deadline: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    sla_warned: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
     updated_at: Mapped[str] = mapped_column(String, nullable=False)
 

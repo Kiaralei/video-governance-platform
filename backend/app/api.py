@@ -9,11 +9,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,12 +24,15 @@ from .auth import (
     Principal,
     create_access_token,
     create_refresh_token,
+    create_ws_token,
     decode_token,
     get_current_user,
+    principal_from_ws_token,
     require_permission,
 )
 from .config import settings
 from .rate_limiter import RATE_LIMITS, RateLimiter
+from .realtime import hub, make_envelope
 from .redis_client import get_redis
 from .schemas import (
     BatchIngestRequest,
@@ -117,6 +122,12 @@ def refresh(request: Request, payload: RefreshRequest) -> dict[str, Any]:
 @auth_router.get("/me")
 def me(user: Principal = Depends(get_current_user)) -> dict[str, Any]:
     return {"user_id": user.user_id, "roles": user.roles}
+
+
+@auth_router.post("/ws-token", dependencies=[Depends(rate_limit("auth.ws_token"))])
+def ws_token(user: Principal = Depends(get_current_user)) -> dict[str, Any]:
+    """签发 WS 握手专用短期令牌（type='ws'，30 分钟）。"""
+    return create_ws_token(user.user_id, user.roles)
 
 
 # --- system ------------------------------------------------------------------
@@ -230,6 +241,24 @@ def decide_task(
     return _service(request).decide_task(task_id, body)
 
 
+@human_router.post("/{task_id}/heartbeat")
+def heartbeat_task(
+    request: Request,
+    task_id: str,
+    user: Principal = Depends(require_permission("review.human.decide")),
+) -> dict[str, Any]:
+    return _service(request).heartbeat_task(task_id, user.user_id)
+
+
+@human_router.post("/{task_id}/release")
+def release_task(
+    request: Request,
+    task_id: str,
+    user: Principal = Depends(require_permission("review.human.decide")),
+) -> dict[str, Any]:
+    return _service(request).release_task(task_id, user.user_id)
+
+
 # --- policy / 策略维度管理（Stage 4） ----------------------------------------
 
 @policy_router.get("/dimensions", dependencies=[Depends(require_permission("policy.read"))])
@@ -303,6 +332,48 @@ def activate_policy_version(
     return _service(request).activate_policy_version(version_id, user.user_id)
 
 
+# --- WebSocket 实时推送（Stage 5） -------------------------------------------
+
+def _ws_message_type(raw: str) -> str:
+    """兼容纯文本（HEARTBEAT/PING）与 JSON 信封（{"type": ...}）。"""
+    raw = raw.strip()
+    if raw.startswith("{"):
+        try:
+            return str(json.loads(raw).get("type", "")).upper()
+        except (ValueError, TypeError):
+            return ""
+    return raw.upper()
+
+
+async def review_websocket(websocket: WebSocket) -> None:
+    """ws://host/ws/review?token=<ws_token|login_jwt>。双模式认证 + 心跳双协议。"""
+    token = websocket.query_params.get("token", "")
+    try:
+        principal = principal_from_ws_token(token)
+    except Exception:
+        await websocket.close(code=4401)  # 认证失败
+        return
+    if not principal.user_id:
+        await websocket.close(code=4401)
+        return
+
+    await hub.connect(websocket, principal.user_id, principal.roles)
+    try:
+        await websocket.send_json(make_envelope("connected", {"user_id": principal.user_id}))
+        while True:
+            raw = await websocket.receive_text()
+            msg_type = _ws_message_type(raw)
+            if msg_type == "HEARTBEAT":
+                await websocket.send_json(make_envelope("HEARTBEAT_ACK", {}))
+            elif msg_type == "PING":
+                await websocket.send_json(make_envelope("PONG", {}))
+            # 其余客户端消息（如 RECONNECT_SYNC）MVP 暂忽略。
+    except WebSocketDisconnect:
+        pass
+    finally:
+        hub.disconnect(websocket, principal.user_id)
+
+
 # --- dev ---------------------------------------------------------------------
 
 @dev_router.post("/reset")
@@ -343,9 +414,26 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         app.state.worker = worker
         app.state.rate_limiter = RateLimiter(get_redis())
         worker.start()
+
+        # Stage 5：把实时枢纽绑定到当前事件循环 + 接入 Redis 跨实例广播。
+        loop = asyncio.get_running_loop()
+        hub.bind_loop(loop)
+        hub.attach_redis(get_redis())
+
+        async def _sweeper() -> None:
+            while True:
+                await asyncio.sleep(settings.realtime_sweep_seconds)
+                try:
+                    await loop.run_in_executor(None, service.sweep_locks_and_sla)
+                except Exception:  # noqa: BLE001 - sweep 故障不应中断服务
+                    pass
+
+        sweeper_task = loop.create_task(_sweeper())
         try:
             yield
         finally:
+            sweeper_task.cancel()
+            await hub.shutdown()
             worker.stop()
 
     app = FastAPI(title=settings.app_name, version="1.0.0", lifespan=lifespan)
@@ -372,6 +460,9 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     for router in _ROUTERS:
         app.include_router(router)
+
+    # Stage 5：WebSocket 实时推送端点。
+    app.add_api_websocket_route("/ws/review", review_websocket)
 
     # 静态前端挂在根路径，作为兜底；API 路由已先注册，优先匹配。
     frontend_dir = settings.frontend_dir

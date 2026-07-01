@@ -49,6 +49,12 @@ class Settings:
     jwt_algorithm: str = "HS256"
     access_token_ttl_seconds: int = int(os.environ.get("VGP_ACCESS_TOKEN_TTL", str(60 * 60)))
     refresh_token_ttl_seconds: int = int(os.environ.get("VGP_REFRESH_TOKEN_TTL", str(14 * 24 * 3600)))
+    # Stage 5：WebSocket 短期令牌 + 案件锁 + SLA。
+    ws_token_ttl_seconds: int = int(os.environ.get("VGP_WS_TOKEN_TTL", str(30 * 60)))
+    case_lock_ttl_seconds: int = int(os.environ.get("VGP_CASE_LOCK_TTL", str(30 * 60)))
+    sla_default_seconds: int = int(os.environ.get("VGP_SLA_DEFAULT_SECONDS", str(4 * 3600)))
+    sla_warning_seconds: int = int(os.environ.get("VGP_SLA_WARNING_SECONDS", str(30 * 60)))
+    realtime_sweep_seconds: float = float(os.environ.get("VGP_REALTIME_SWEEP_SECONDS", "15"))
 
 
 settings = Settings()

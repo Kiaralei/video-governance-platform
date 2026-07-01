@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -16,6 +16,7 @@ from .decision_engine import DecisionEngineService, StrategyRegistry
 from .decision_engine.types import VALID_STATUS_TRANSITIONS, DimensionStatus
 from .evidence import EvidenceExtractor
 from .llm_review import is_llm_configured
+from .realtime import hub
 from .auth import hash_password, verify_password
 from .models import (
     AuditLog,
@@ -44,6 +45,16 @@ JOB_FAILED = "failed"
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def new_id(prefix: str) -> str:
@@ -488,6 +499,9 @@ class GovernanceService:
                 },
             )
 
+            sla_deadline = (
+                _parse_iso(timestamp) + timedelta(seconds=settings.sla_default_seconds)
+            ).isoformat()
             session.add(
                 HumanReviewTask(
                     id=task_id,
@@ -498,6 +512,10 @@ class GovernanceService:
                     decision=None,
                     reason=None,
                     decided_at=None,
+                    locked_at=None,
+                    lock_expires_at=None,
+                    sla_deadline=sla_deadline,
+                    sla_warned=False,
                     created_at=timestamp,
                     updated_at=timestamp,
                 )
@@ -685,15 +703,28 @@ class GovernanceService:
         return loads(package.package_json)
 
     def claim_task(self, task_id: str, reviewer_id: str) -> dict[str, Any]:
+        """领取即加案件锁（Stage 5）。锁未过期时他人不能抢；本人可幂等续租；锁过期可接管。"""
         reviewer_id = reviewer_id.strip() or "reviewer_demo"
-        timestamp = now_iso()
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
+        prev_holder: str | None = None
         with self._session_factory.begin() as session:
-            task = session.get(HumanReviewTask, task_id)
+            # 行锁（Postgres FOR UPDATE；SQLite 忽略但有文件级写锁）消除领取竞态。
+            task = session.get(HumanReviewTask, task_id, with_for_update=True)
             if task is None:
                 raise NotFoundError("任务不存在")
-            if task.status != PENDING:
-                raise ConflictError("只有待审任务可以领取")
+            if task.status == DECIDED:
+                raise ConflictError("任务已完成裁定")
+            lock_expiry = _parse_iso(task.lock_expires_at)
+            locked_active = lock_expiry is not None and lock_expiry > now
+            if locked_active and task.assigned_to and task.assigned_to != reviewer_id:
+                raise ConflictError(f"案件已被 {task.assigned_to} 锁定")
+            prev_holder = task.assigned_to if task.assigned_to != reviewer_id else None
             task.assigned_to = reviewer_id
+            task.locked_at = timestamp
+            task.lock_expires_at = (
+                now + timedelta(seconds=settings.case_lock_ttl_seconds)
+            ).isoformat()
             task.updated_at = timestamp
             self._append_audit(
                 session,
@@ -701,9 +732,86 @@ class GovernanceService:
                 task_id=task_id,
                 actor=reviewer_id,
                 action="task_claimed",
-                detail={"reviewer_id": reviewer_id},
+                detail={"reviewer_id": reviewer_id, "lock_expires_at": task.lock_expires_at},
             )
+            lock_expires_at = task.lock_expires_at
+        # 抢占了他人的过期锁 -> 通知原持有者其锁已失效。
+        if prev_holder:
+            hub.publish_to_user(prev_holder, "task_reassigned", {"task_id": task_id, "new_holder": reviewer_id})
+        hub.publish_to_user(reviewer_id, "task_lock_renewed", {"task_id": task_id, "lock_expires_at": lock_expires_at})
         return self.get_case(task_id)
+
+    def heartbeat_task(self, task_id: str, reviewer_id: str) -> dict[str, Any]:
+        """心跳续租锁（Stage 5）。仅持锁人可续。"""
+        now = datetime.now(timezone.utc)
+        with self._session_factory.begin() as session:
+            task = session.get(HumanReviewTask, task_id, with_for_update=True)
+            if task is None:
+                raise NotFoundError("任务不存在")
+            if task.status == DECIDED:
+                raise ConflictError("任务已完成裁定")
+            if task.assigned_to != reviewer_id:
+                raise ConflictError("只有持锁人可以续租")
+            lock_expiry = _parse_iso(task.lock_expires_at)
+            if lock_expiry is None or lock_expiry <= now:
+                raise ConflictError("锁已过期，请重新领取")
+            new_expiry = (now + timedelta(seconds=settings.case_lock_ttl_seconds)).isoformat()
+            task.lock_expires_at = new_expiry
+            task.updated_at = now.isoformat()
+        hub.publish_to_user(reviewer_id, "task_lock_renewed", {"task_id": task_id, "lock_expires_at": new_expiry})
+        return {"task_id": task_id, "lock_expires_at": new_expiry}
+
+    def release_task(self, task_id: str, reviewer_id: str) -> dict[str, Any]:
+        """主动释放锁（Stage 5）。"""
+        timestamp = now_iso()
+        with self._session_factory.begin() as session:
+            task = session.get(HumanReviewTask, task_id, with_for_update=True)
+            if task is None:
+                raise NotFoundError("任务不存在")
+            if task.assigned_to != reviewer_id:
+                raise ConflictError("只有持锁人可以释放")
+            task.assigned_to = None
+            task.locked_at = None
+            task.lock_expires_at = None
+            task.updated_at = timestamp
+            self._append_audit(
+                session, content_id=task.content_id, task_id=task_id, actor=reviewer_id,
+                action="task_released", detail={"reviewer_id": reviewer_id},
+            )
+        return {"task_id": task_id, "status": "released"}
+
+    def sweep_locks_and_sla(self) -> dict[str, Any]:
+        """周期扫描：释放过期锁 + 推送 SLA 临期告警。由后台 sweeper 定时调用。"""
+        now = datetime.now(timezone.utc)
+        warn_before = now + timedelta(seconds=settings.sla_warning_seconds)
+        expired: list[tuple[str, str]] = []
+        warnings: list[tuple[str, str, str]] = []
+        with self._session_factory.begin() as session:
+            rows = session.execute(
+                select(HumanReviewTask).where(HumanReviewTask.status == PENDING)
+            ).scalars().all()
+            for task in rows:
+                lock_expiry = _parse_iso(task.lock_expires_at)
+                if task.assigned_to and lock_expiry is not None and lock_expiry <= now:
+                    holder = task.assigned_to
+                    task.assigned_to = None
+                    task.locked_at = None
+                    task.lock_expires_at = None
+                    task.updated_at = now.isoformat()
+                    expired.append((task.id, holder))
+                sla = _parse_iso(task.sla_deadline)
+                if sla is not None and not task.sla_warned and now < sla <= warn_before:
+                    task.sla_warned = True
+                    task.updated_at = now.isoformat()
+                    warnings.append((task.id, task.assigned_to or "", task.sla_deadline))
+        for task_id, holder in expired:
+            hub.publish_to_user(holder, "task_lock_expired", {"task_id": task_id})
+        for task_id, holder, deadline in warnings:
+            payload = {"task_id": task_id, "sla_deadline": deadline}
+            if holder:
+                hub.publish_to_user(holder, "sla_warning", payload)
+            hub.publish_to_role("senior_reviewer", "sla_warning", payload)
+        return {"expired_locks": len(expired), "sla_warnings": len(warnings)}
 
     def decide_task(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         decision = str(payload.get("decision", "")).lower()
@@ -713,21 +821,30 @@ class GovernanceService:
         if not reason:
             raise ValidationError("裁定理由不能为空")
         reviewer_id = str(payload.get("reviewer_id", "reviewer_demo")).strip() or "reviewer_demo"
-        timestamp = now_iso()
+        now = datetime.now(timezone.utc)
+        timestamp = now.isoformat()
 
         with self._session_factory.begin() as session:
-            task = session.get(HumanReviewTask, task_id)
+            task = session.get(HumanReviewTask, task_id, with_for_update=True)
             if task is None:
                 raise NotFoundError("任务不存在")
             if task.status == DECIDED:
                 raise ConflictError("任务已经完成裁定")
+            # 案件锁排他性：他人持有效锁时不得裁定（终态操作也必须尊重锁）。
+            lock_expiry = _parse_iso(task.lock_expires_at)
+            if lock_expiry is not None and lock_expiry > now and task.assigned_to and task.assigned_to != reviewer_id:
+                raise ConflictError(f"案件已被 {task.assigned_to} 锁定，无法裁定")
 
             task.status = DECIDED
             task.assigned_to = task.assigned_to or reviewer_id
             task.decision = decision
             task.reason = reason
             task.decided_at = timestamp
+            # 裁定即结案，释放案件锁。
+            task.locked_at = None
+            task.lock_expires_at = None
             task.updated_at = timestamp
+            content_id = task.content_id
 
             content = session.get(ContentItem, task.content_id)
             content.status = f"final_{decision}"
@@ -742,6 +859,11 @@ class GovernanceService:
                 action="human_decision_submitted",
                 detail={"decision": decision, "reason": reason},
             )
+        hub.publish_to_role(
+            "senior_reviewer",
+            "task_decided",
+            {"task_id": task_id, "content_id": content_id, "decision": decision},
+        )
         return {"task_id": task_id, "status": DECIDED, "decision": decision}
 
     def record_dead_letter(
@@ -1382,6 +1504,9 @@ class GovernanceService:
             "assigned_to": row["assigned_to"],
             "decision": row["decision"],
             "reason": row["reason"],
+            "locked_at": row.get("locked_at"),
+            "lock_expires_at": row.get("lock_expires_at"),
+            "sla_deadline": row.get("sla_deadline"),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
             "title": row.get("title"),

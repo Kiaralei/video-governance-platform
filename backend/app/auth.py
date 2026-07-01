@@ -89,8 +89,24 @@ def create_refresh_token(user_id: str) -> str:
     return _encode({"sub": user_id, "type": "refresh"}, settings.refresh_token_ttl_seconds)
 
 
+def create_ws_token(user_id: str, roles: list[str]) -> dict:
+    """WS 握手专用短期令牌（type='ws'，默认 30 分钟）。对齐设计 §7.3。"""
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(seconds=settings.ws_token_ttl_seconds)
+    token = _encode({"sub": user_id, "roles": roles, "type": "ws"}, settings.ws_token_ttl_seconds)
+    return {"ws_token": token, "expires_at": expires_at.isoformat()}
+
+
 def decode_token(token: str) -> dict:
     return jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+
+
+def principal_from_ws_token(token: str) -> "Principal":
+    """双模式 WS 认证：接受 type='ws'（推荐）或 type='access'（MVP 兼容）。"""
+    data = decode_token(token)
+    if data.get("type") not in {"ws", "access"}:
+        raise jwt.InvalidTokenError("需要 ws 或 access 令牌")
+    return Principal(user_id=str(data.get("sub", "")), roles=list(data.get("roles", [])))
 
 
 # --- FastAPI 依赖 ------------------------------------------------------------

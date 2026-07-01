@@ -23,6 +23,7 @@ RATE_LIMITS: dict[str, RateLimitRule] = {
     "content.batch": RateLimitRule(max_requests=5, window_seconds=60),
     "review.human.decide": RateLimitRule(max_requests=60, window_seconds=60),
     "auth.login": RateLimitRule(max_requests=10, window_seconds=60),
+    "auth.ws_token": RateLimitRule(max_requests=10, window_seconds=60),
 }
 
 
