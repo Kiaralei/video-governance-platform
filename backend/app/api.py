@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSock
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .auth import (
     Principal,
@@ -62,6 +63,19 @@ from .worker import PipelineWorker
 
 def _service(request: Request) -> GovernanceService:
     return request.app.state.service
+
+
+class SPAStaticFiles(StaticFiles):
+    """SPA 静态托管：命中文件正常返回；未命中（前端路由 /workbench 等）回退 index.html，
+    交给 BrowserRouter 处理，保证深链/刷新不 404。"""
+
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
 
 
 def rate_limit(name: str):
@@ -620,10 +634,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         snapshot = request.app.state.service.metrics_snapshot()
         return PlainTextResponse(content=render_prometheus(snapshot), media_type="text/plain; version=0.0.4")
 
-    # 静态前端挂在根路径，作为兜底；API 路由已先注册，优先匹配。
+    # 静态前端（React 构建产物）挂在根路径，作为兜底；API 路由已先注册，优先匹配。
     frontend_dir = settings.frontend_dir
     if frontend_dir.exists():
-        app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+        app.mount("/", SPAStaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
     return app
 

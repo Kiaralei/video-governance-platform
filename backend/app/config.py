@@ -34,7 +34,8 @@ class Settings:
     vision_model_url: str = os.environ.get("VGP_VISION_MODEL_URL", "")
     model_api_key: str = os.environ.get("VGP_MODEL_API_KEY", "")
     model_timeout_seconds: float = float(os.environ.get("VGP_MODEL_TIMEOUT_SECONDS", "30"))
-    frontend_dir: Path = ROOT_DIR / "frontend"
+    # React 前端构建产物（Vite `npm run build` -> frontend/dist）。未构建时后端跳过挂载。
+    frontend_dir: Path = ROOT_DIR / "frontend" / "dist"
     pipeline_poll_seconds: float = float(os.environ.get("VGP_PIPELINE_POLL_SECONDS", "0.5"))
     max_pipeline_backlog: int = int(os.environ.get("VGP_MAX_PIPELINE_BACKLOG", "1000"))
     max_batch_ingest_items: int = int(os.environ.get("VGP_MAX_BATCH_INGEST_ITEMS", "100"))
