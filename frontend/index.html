@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>视频治理平台 MVP</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <span class="brand-mark">审</span>
+          <div>
+            <strong>视频治理平台</strong>
+            <small>MVP 审核工作台</small>
+          </div>
+        </div>
+        <nav>
+          <button class="nav-item active" data-view="machine">机审中心</button>
+          <button class="nav-item" data-view="queue">人审队列</button>
+          <button class="nav-item" data-view="upload">内容摄取</button>
+          <button class="nav-item" data-view="audit">审计链路</button>
+        </nav>
+        <div class="scope">
+          <span>租户</span>
+          <strong id="tenant">default</strong>
+          <span>法域</span>
+          <strong id="jurisdiction">global</strong>
+        </div>
+      </aside>
+
+      <main>
+        <header class="topbar">
+          <div>
+            <h1>视频内容治理工作台</h1>
+            <p>单租户、global 法域；机审给出建议，最终仅支持人审通过/拦截。</p>
+          </div>
+          <div class="actions">
+            <button id="seedBtn" class="secondary">生成示例</button>
+            <button id="refreshBtn">刷新</button>
+          </div>
+        </header>
+
+        <section class="metrics" aria-label="系统概览">
+          <article>
+            <span>内容总数</span>
+            <strong id="metricTotal">0</strong>
+          </article>
+          <article>
+            <span>待人审</span>
+            <strong id="metricPending">0</strong>
+          </article>
+          <article>
+            <span>机审排队</span>
+            <strong id="metricQueued">0</strong>
+          </article>
+          <article>
+            <span>机审处理中</span>
+            <strong id="metricProcessing">0</strong>
+          </article>
+          <article>
+            <span>已通过</span>
+            <strong id="metricPass">0</strong>
+          </article>
+          <article>
+            <span>已拦截</span>
+            <strong id="metricBlock">0</strong>
+          </article>
+        </section>
+
+        <section id="machineView" class="view active-view">
+          <div class="section-heading">
+            <h2>机审中心</h2>
+            <span id="machineCount">0 条机审记录</span>
+          </div>
+          <div class="workbench">
+            <section class="queue-list" id="machineList" aria-label="机审记录"></section>
+            <section class="case-panel" id="machinePanel">
+              <div class="empty-state">生成或摄取内容后，这里会展示机审结果。</div>
+            </section>
+          </div>
+        </section>
+
+        <section id="queueView" class="view">
+          <div class="section-heading">
+            <h2>人审队列</h2>
+            <span id="queueCount">0 条待审</span>
+          </div>
+          <div class="workbench">
+            <section class="queue-list" id="queueList" aria-label="待人审任务"></section>
+            <section class="case-panel" id="casePanel">
+              <div class="empty-state">请选择任务，或先生成示例内容。</div>
+            </section>
+          </div>
+        </section>
+
+        <section id="uploadView" class="view">
+          <div class="section-heading">
+            <h2>内容摄取</h2>
+            <span>摄取后自动生成证据包和机审结果，并流转到人审队列</span>
+          </div>
+          <form id="uploadForm" class="form-grid">
+            <label>
+              标题
+              <input name="title" required value="创作者旅行短片" />
+            </label>
+            <label>
+              创作者 ID
+              <input name="creator_id" value="creator_demo" />
+            </label>
+            <label class="wide">
+              描述
+              <textarea name="description" required>一条带有旁白和地标画面的旅行短视频，未发现明显策略风险。</textarea>
+            </label>
+            <label>
+              POI
+              <input name="poi" value="global" />
+            </label>
+            <label>
+              视频 URL
+              <input name="video_url" value="https://example.local/video.mp4" />
+            </label>
+            <button type="submit">创建审核任务</button>
+          </form>
+          <form id="batchUploadForm" class="form-grid batch-form">
+            <label class="wide">
+              批量摄取 JSON
+              <textarea name="items_json" required>[
+  {
+    "title": "批量测试视频 1",
+    "description": "一条普通旅行视频，用于批量摄取测试。",
+    "creator_id": "creator_batch",
+    "video_url": "https://example.local/batch/1.mp4"
+  },
+  {
+    "title": "批量测试视频 2",
+    "description": "一条普通教学视频，用于批量摄取测试。",
+    "creator_id": "creator_batch",
+    "video_url": "https://example.local/batch/2.mp4"
+  }
+]</textarea>
+            </label>
+            <button type="submit">批量创建审核任务</button>
+            <span id="batchUploadResult" class="muted"></span>
+          </form>
+        </section>
+
+        <section id="auditView" class="view">
+          <div class="section-heading">
+            <h2>审计链路</h2>
+            <span>追加写入的哈希链事件</span>
+          </div>
+          <div id="auditList" class="audit-list"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>
