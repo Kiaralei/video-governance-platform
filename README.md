@@ -70,7 +70,7 @@ python backend/run.py
 - 如果机器安装了 `ffprobe`，会补充时长、分辨率和编码信息。
 - 如果机器安装了 `ffmpeg`，会尝试抽取最多 3 张关键帧到 `data/evidence/{content_id}`。
 - ASR/OCR/视觉目标检测支持外部 HTTP 模型服务；未配置时会记录 `not_configured` 并使用描述、标题和通用场景标签作为 fallback。
-- LLM 机审使用 OpenAI-compatible Chat Completions 接口；未配置 API Key 时自动回退到本地关键词规则。
+- LLM 机审使用 OpenAI-compatible Chat Completions 接口。每个策略维度（通用策略 / 博彩 / 毒品暴力 / 未成年合规 / 营销画风 / 内容匹配）都用各自的 `build_prompt` 独立调用 LLM 作答；未配置 API Key、熔断器打开或单次调用失败时，该维度自动回退到本地关键词规则，互不影响。
 
 启用 LLM 机审：
 

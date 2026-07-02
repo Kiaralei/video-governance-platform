@@ -23,6 +23,9 @@ class MarketingStrategy(BaseReviewStrategy):
         )
 
     def review(self, evidence: dict[str, Any], policy_version: str) -> DimensionVerdict:
+        llm = self._llm_verdict(evidence, policy_version)
+        if llm is not None:
+            return llm
         text = self._text_blob(evidence)
         hits = [t for t in _MARKETING_TERMS if t in text]
         if not hits:

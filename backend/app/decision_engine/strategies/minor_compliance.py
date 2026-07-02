@@ -26,6 +26,9 @@ class MinorComplianceStrategy(BaseReviewStrategy):
         )
 
     def review(self, evidence: dict[str, Any], policy_version: str) -> DimensionVerdict:
+        llm = self._llm_verdict(evidence, policy_version)
+        if llm is not None:
+            return llm
         text = self._text_blob(evidence)
         objects = set(self._object_labels(evidence))
         minor_present = any(t in text for t in _MINOR_TERMS) or bool(objects & _MINOR_OBJECTS)

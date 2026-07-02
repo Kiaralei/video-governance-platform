@@ -15,9 +15,9 @@ ThreadPoolExecutor 提供 —— 语义等价、测试可确定。
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Optional
 
-from .types import DimensionVerdict, StrategyConfig
+from .types import DimensionDecision, DimensionVerdict, EvidenceRef, StrategyConfig
 
 
 class BaseReviewStrategy(ABC):
@@ -35,6 +35,41 @@ class BaseReviewStrategy(ABC):
     def build_prompt(self, evidence: dict[str, Any]) -> str:
         """构建该维度的 LLM Prompt。"""
         ...
+
+    # --- LLM 审查（子类共用：LLM 优先，失败/未配置返回 None，交关键词兜底） --------
+
+    def _llm_verdict(
+        self, evidence: dict[str, Any], policy_version: str
+    ) -> Optional[DimensionVerdict]:
+        """用本维度的 build_prompt 调 LLM，映射为 DimensionVerdict。
+
+        返回 None 表示 LLM 未配置 / 熔断 / 调用失败，调用方应回退关键词规则。
+        LLM 只输出 VIOLATION/NO_VIOLATION/UNCERTAIN，不涉及处置与 CSAM/critical 定级。
+        """
+        # 延迟导入：基类被注册表在导入期加载，避免顶层耦合 app.llm_review。
+        from ..llm_review import review_with_configured_llm
+
+        llm = review_with_configured_llm(evidence, prompt=self.build_prompt(evidence))
+        if llm is None:
+            return None
+        decision = {
+            "VIOLATION": DimensionDecision.VIOLATION,
+            "NO_VIOLATION": DimensionDecision.NO_VIOLATION,
+        }.get(llm["decision"], DimensionDecision.UNCERTAIN)
+        return DimensionVerdict(
+            dimension_id=self.dimension_id,
+            dimension_name=self.dimension_name,
+            decision=decision,
+            confidence=float(llm["confidence"]),
+            reason=llm["reason"],
+            policy_version=policy_version,
+            model_version=llm.get("model", ""),
+            source="llm",
+            evidence_refs=[
+                EvidenceRef(ref_type="llm", description=str(ref))
+                for ref in llm.get("evidence_refs", [])
+            ],
+        )
 
     # --- 证据取值助手（子类共用，避免各自重复解析 evidence dict） --------------
 

@@ -35,8 +35,15 @@ def is_llm_configured() -> bool:
 
 
 def review_with_configured_llm(
-    evidence: dict[str, Any], breaker: Optional[CircuitBreaker] = None
+    evidence: dict[str, Any],
+    breaker: Optional[CircuitBreaker] = None,
+    prompt: Optional[str] = None,
 ) -> dict[str, Any] | None:
+    """用配置的 LLM 审查证据包。
+
+    prompt 为空时退回通用整体审查提示词（_build_prompt）；各策略维度可传入
+    自己的 build_prompt(evidence)，让 LLM 针对该维度作答。
+    """
     api_key = _api_key()
     if not api_key:
         return None
@@ -57,7 +64,7 @@ def review_with_configured_llm(
                     "Return only strict JSON. Do not include CSAM or critical escalation labels."
                 ),
             },
-            {"role": "user", "content": _build_prompt(evidence)},
+            {"role": "user", "content": prompt if prompt else _build_prompt(evidence)},
         ],
     }
 

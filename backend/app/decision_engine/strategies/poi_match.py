@@ -51,6 +51,9 @@ class PoiMatchStrategy(BaseReviewStrategy):
         )
 
     def review(self, evidence: dict[str, Any], policy_version: str) -> DimensionVerdict:
+        llm = self._llm_verdict(evidence, policy_version)
+        if llm is not None:
+            return llm
         meta = evidence.get("metadata", {}) or {}
         context = _context_from(meta)
         poi = context.get("poi") if isinstance(context.get("poi"), dict) else {}

@@ -1,6 +1,7 @@
 """通用策略维度 —— 承接 Stage 1 的整体机审能力。
 
-配置了 LLM 则调用 review_with_configured_llm 做整体判断；否则退化为关键词规则。
+配置了 LLM 则用本维度 build_prompt 调 LLM 做整体判断（经 BaseReviewStrategy._llm_verdict）；
+否则退化为关键词规则。
 把原 services._run_machine_review 的逻辑收敛成一个标准维度，其他专项维度并行叠加。
 """
 
@@ -8,10 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from ...llm_review import review_with_configured_llm
 from ..base import BaseReviewStrategy
 from ..registry import StrategyRegistry
-from ..types import DimensionDecision, DimensionVerdict, EvidenceRef
+from ..types import DimensionDecision, DimensionVerdict
 
 _BLOCK_TERMS = {"gambling", "bet", "bonus", "weapon", "hate"}
 _PASS_TERMS = {"cooking", "recipe", "education", "travel", "music"}
@@ -27,26 +27,9 @@ class GeneralPolicyStrategy(BaseReviewStrategy):
         )
 
     def review(self, evidence: dict[str, Any], policy_version: str) -> DimensionVerdict:
-        llm = review_with_configured_llm(evidence)
+        llm = self._llm_verdict(evidence, policy_version)
         if llm is not None:
-            decision = {
-                "VIOLATION": DimensionDecision.VIOLATION,
-                "NO_VIOLATION": DimensionDecision.NO_VIOLATION,
-            }.get(llm["decision"], DimensionDecision.UNCERTAIN)
-            return DimensionVerdict(
-                dimension_id=self.dimension_id,
-                dimension_name=self.dimension_name,
-                decision=decision,
-                confidence=float(llm["confidence"]),
-                reason=llm["reason"],
-                policy_version=policy_version,
-                model_version=llm.get("model", ""),
-                source="llm",
-                evidence_refs=[
-                    EvidenceRef(ref_type="llm", description=str(ref))
-                    for ref in llm.get("evidence_refs", [])
-                ],
-            )
+            return llm
 
         text = self._text_blob(evidence)
         block_score = sum(1 for t in _BLOCK_TERMS if t in text)
