@@ -190,6 +190,7 @@ export interface DemoCaseResult {
   content_id: string
   job_id: string
   title: string
+  video_url: string
   recommendation: string
   final_decision: string | null
   content_status: string
@@ -204,6 +205,9 @@ export interface DemoCasesResponse {
   batch_id: string
   cleared?: number
   total: number
+  local_video_count?: number
+  appeals_seeded?: number
+  flywheel_samples_seeded?: number
   items: DemoCaseResult[]
 }
 

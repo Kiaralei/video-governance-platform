@@ -59,11 +59,18 @@ export function MachineMonitor() {
       const human = data.items.filter((item) => item.policy_decision === 'needs_human_review').length
       const blocked = data.items.filter((item) => item.final_decision === 'block').length
       const passed = data.items.filter((item) => item.final_decision === 'pass').length
+      const localVideos = data.local_video_count ?? 0
+      const appeals = data.appeals_seeded ?? 0
+      const flywheel = data.flywheel_samples_seeded ?? 0
       const cleared = data.cleared ? `，已清理 ${data.cleared} 条旧演示数据` : ''
       Message.success(`已注入 ${data.total} 条演示案例：${blocked} 拦截 / ${human} 人审 / ${passed} 通过${cleared}`)
+      Message.info(`演示数据已关联本地视频 ${localVideos} 条，申诉 ${appeals} 条，回流样本 ${flywheel} 条`)
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['machine-reviews'] })
       qc.invalidateQueries({ queryKey: ['queue'] })
+      qc.invalidateQueries({ queryKey: ['appeals'] })
+      qc.invalidateQueries({ queryKey: ['quality-summary'] })
+      qc.invalidateQueries({ queryKey: ['flywheel'] })
     },
     onError: (e: unknown) => Message.error(extractErr(e)),
   })
@@ -133,8 +140,8 @@ export function MachineMonitor() {
             <Tooltip content="auto_pass">
               <div className="evidence-item"><StatusTag kind="policy" value="auto_pass" /> 直接发布/通过，不创建人审任务</div>
             </Tooltip>
-            <Tooltip content="auto_block / critical_escalate">
-              <div className="evidence-item"><StatusTag kind="policy" value="auto_block" /> / <StatusTag kind="policy" value="critical_escalate" /> 直接拦截，不创建人审任务</div>
+            <Tooltip content="auto_block">
+              <div className="evidence-item"><StatusTag kind="policy" value="auto_block" /> 直接拦截，不创建人审任务</div>
             </Tooltip>
             <Tooltip content="needs_human_review">
               <div className="evidence-item"><StatusTag kind="policy" value="needs_human_review" /> 进入人工队列，由审核员二次裁定</div>
@@ -201,7 +208,7 @@ export function MachineMonitor() {
           ]}
           rowClassName={(record) => {
             const policy = record.decision_summary?.final_decision
-            if (policy === 'critical_escalate' || policy === 'auto_block') return 'risk-row-critical'
+            if (policy === 'auto_block') return 'risk-row-critical'
             if (policy === 'needs_human_review') return 'risk-row-review'
             return ''
           }}

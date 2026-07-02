@@ -106,7 +106,7 @@ class MvpFlowTest(unittest.TestCase):
             by_scenario = {item["scenario"]: item for item in result["items"]}
             self.assertEqual(
                 {
-                    "critical_gambling_block",
+                    "gambling_auto_block",
                     "drug_violence_auto_block",
                     "marketing_auto_block",
                     "context_mismatch_needs_human_review",
@@ -114,7 +114,7 @@ class MvpFlowTest(unittest.TestCase):
                 },
                 set(by_scenario),
             )
-            self.assertEqual(by_scenario["critical_gambling_block"]["policy_decision"], "critical_escalate")
+            self.assertEqual(by_scenario["gambling_auto_block"]["policy_decision"], "auto_block")
             self.assertEqual(by_scenario["drug_violence_auto_block"]["policy_decision"], "auto_block")
             self.assertEqual(by_scenario["marketing_auto_block"]["policy_decision"], "auto_block")
             self.assertEqual(
@@ -125,6 +125,14 @@ class MvpFlowTest(unittest.TestCase):
             self.assertEqual(by_scenario["context_mismatch_needs_human_review"]["content_status"], "human_review")
             self.assertIsNotNone(by_scenario["context_mismatch_needs_human_review"]["task_id"])
             self.assertEqual(service.list_queue()["total"], 1)
+            self.assertEqual(result["local_video_count"], 5)
+            self.assertGreaterEqual(result["appeals_seeded"], 2)
+            self.assertGreaterEqual(result["flywheel_samples_seeded"], 4)
+            self.assertTrue(
+                all(item["video_url"].startswith("data/test_videos/") for item in result["items"])
+            )
+            self.assertGreaterEqual(service.list_appeals()["total"], 2)
+            self.assertGreaterEqual(service.quality_summary()["total_samples"], 4)
 
     def test_business_context_mismatch_routes_to_human_review(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

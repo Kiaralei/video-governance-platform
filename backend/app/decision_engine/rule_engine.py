@@ -15,7 +15,6 @@ from .types import (
     DimensionDecision,
     DimensionVerdict,
     PolicyDecision,
-    SeveritySuggestion,
     StrategyConfig,
 )
 
@@ -66,9 +65,9 @@ class RuleEngine:
         if pre_filter.get("csam_hash_hit"):
             triggered_rules.append("csam_hash_hit")
             return DecisionSummary(
-                final_decision=PolicyDecision.CRITICAL_ESCALATE,
+                final_decision=PolicyDecision.AUTO_BLOCK,
                 risk_score=1.0,
-                machine_recommendation=_RECOMMENDATION_MAP[PolicyDecision.CRITICAL_ESCALATE],
+                machine_recommendation=_RECOMMENDATION_MAP[PolicyDecision.AUTO_BLOCK],
                 triggered_rules=triggered_rules,
                 dimension_verdicts=verdicts,
                 shadow_verdicts=shadow_verdicts or [],
@@ -84,12 +83,7 @@ class RuleEngine:
             severity = str(hit.get("severity", "")).lower()
             confidence = float(hit.get("confidence", 0.0))
             if confidence >= 0.90 and severity in ("critical", "high"):
-                mapped = (
-                    PolicyDecision.CRITICAL_ESCALATE
-                    if severity == "critical"
-                    else PolicyDecision.AUTO_BLOCK
-                )
-                decisions.append(mapped)
+                decisions.append(PolicyDecision.AUTO_BLOCK)
                 triggered_rules.append(f"cloud_api:{hit.get('rule_id', severity)}")
                 risk_score = max(risk_score, confidence)
 
@@ -141,11 +135,6 @@ class RuleEngine:
             return PolicyDecision.NEEDS_HUMAN_REVIEW
 
         if verdict.decision == DimensionDecision.VIOLATION:
-            if (
-                verdict.severity_suggestion == SeveritySuggestion.CRITICAL
-                and verdict.confidence >= auto_threshold
-            ):
-                return PolicyDecision.CRITICAL_ESCALATE
             if verdict.confidence >= auto_threshold:
                 return PolicyDecision.AUTO_BLOCK
             if verdict.confidence >= review_threshold:

@@ -101,19 +101,19 @@ class RuleEngineTest(unittest.TestCase):
         summary = self.engine.aggregate(verdicts, {"pre_filter_results": {}})
         self.assertEqual(summary.final_decision, PolicyDecision.NEEDS_HUMAN_REVIEW)
 
-    def test_critical_severity_escalates(self):
+    def test_critical_severity_is_downgraded_to_auto_block(self):
         verdicts = [
             self._verdict("dim_a", DimensionDecision.VIOLATION, 0.95, SeveritySuggestion.CRITICAL)
         ]
         summary = self.engine.aggregate(verdicts, {"pre_filter_results": {}})
-        self.assertEqual(summary.final_decision, PolicyDecision.CRITICAL_ESCALATE)
+        self.assertEqual(summary.final_decision, PolicyDecision.AUTO_BLOCK)
 
     def test_csam_hash_short_circuits(self):
         summary = self.engine.aggregate(
             [self._verdict("dim_a", DimensionDecision.NO_VIOLATION, 0.99)],
             {"pre_filter_results": {"csam_hash_hit": True}},
         )
-        self.assertEqual(summary.final_decision, PolicyDecision.CRITICAL_ESCALATE)
+        self.assertEqual(summary.final_decision, PolicyDecision.AUTO_BLOCK)
         self.assertIn("csam_hash_hit", summary.triggered_rules)
 
     def test_cloud_api_high_confidence_blocks(self):
@@ -227,8 +227,7 @@ class ServiceIntegrationTest(unittest.TestCase):
             service.drain_pipeline()
             detail = service.get_machine_review(queued["content_id"])
             summary = detail["decision_summary"]
-            # 博彩 + 引流(qr/scan) -> critical_escalate；取严链盖过其他 pass 维度。
-            self.assertIn(summary["final_decision"], ("auto_block", "critical_escalate"))
+            self.assertEqual(summary["final_decision"], "auto_block")
             self.assertFalse(summary["action"]["route_to_human_review"])
             self.assertEqual(detail["recommendation"], "block")
             self.assertEqual(detail["content_status"], "final_block")

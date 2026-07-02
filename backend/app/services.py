@@ -16,7 +16,7 @@ from .appeals import (
     AppealStatus,
     can_transition as appeal_can_transition,
 )
-from .config import settings
+from .config import ROOT_DIR, settings
 from .database import create_db_engine, init_db, is_postgres_enabled, make_session_factory
 from .decision_engine import DecisionEngineService, StrategyRegistry
 from .decision_engine.types import VALID_STATUS_TRANSITIONS, DimensionStatus
@@ -52,6 +52,8 @@ JOB_QUEUED = "queued"
 JOB_PROCESSING = "processing"
 JOB_COMPLETED = "completed"
 JOB_FAILED = "failed"
+
+DEMO_VIDEO_DIR = Path("data") / "test_videos"
 
 
 def now_iso() -> str:
@@ -294,19 +296,28 @@ class GovernanceService:
         created = [self.ingest_content(item) for item in examples]
         return {"items": created}
 
+    def _demo_video_source(self, *patterns: str, fallback: str) -> str:
+        """Return a repository-relative demo video path for deterministic seeds."""
+        video_dir = ROOT_DIR / DEMO_VIDEO_DIR
+        for pattern in patterns:
+            matches = sorted(video_dir.glob(pattern))
+            if matches:
+                return matches[0].relative_to(ROOT_DIR).as_posix()
+        return (DEMO_VIDEO_DIR / fallback).as_posix()
+
     def seed_demo_cases(self) -> dict[str, Any]:
         """Create a stable demo batch that exercises the production routing paths."""
         cleared = self._clear_demo_cases()
         batch_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         examples = [
             {
-                "scenario": "critical_gambling_block",
-                "expected_policy_decision": "critical_escalate",
-                "title": f"DEMO critical gambling {batch_id}",
+                "scenario": "gambling_auto_block",
+                "expected_policy_decision": "auto_block",
+                "title": f"DEMO gambling auto block {batch_id}",
                 "description": "Casino betting bonus. Scan QR to join invite group for odds reward.",
-                "creator_id": "demo_creator_gambling_critical",
+                "creator_id": "demo_creator_gambling",
                 "poi": "global",
-                "video_url": "https://example.local/videos/demo-critical-gambling.mp4",
+                "video_url": self._demo_video_source("*betting*.mp4", fallback="00004_betting.mp4"),
             },
             {
                 "scenario": "drug_violence_auto_block",
@@ -315,7 +326,7 @@ class GovernanceService:
                 "description": "Weapon gun knife violence blood scene shown in a dangerous clip.",
                 "creator_id": "demo_creator_safety",
                 "poi": "global",
-                "video_url": "https://example.local/videos/demo-drug-violence-auto-block.mp4",
+                "video_url": self._demo_video_source("*education*.mp4", fallback="00002_education.mp4"),
             },
             {
                 "scenario": "marketing_auto_block",
@@ -324,7 +335,7 @@ class GovernanceService:
                 "description": "Limited offer coupon discount buy now coupon discount scan QR promotion.",
                 "creator_id": "demo_creator_marketing_block",
                 "poi": "global",
-                "video_url": "https://example.local/videos/demo-hard-sell-auto-block.mp4",
+                "video_url": self._demo_video_source("*marketing_qr*.mp4", fallback="00003_marketing_qr.mp4"),
             },
             {
                 "scenario": "context_mismatch_needs_human_review",
@@ -337,7 +348,7 @@ class GovernanceService:
                 "product_category": "restaurant food",
                 "shopping_cart_url": "https://shop.example.local/cart/premium-sushi-platter",
                 "merchant_name": "Shanghai Luxury Sushi Bar",
-                "video_url": "https://example.local/videos/demo-park-vlog-context-review.mp4",
+                "video_url": self._demo_video_source("*normal_travel*.mp4", fallback="00001_normal_travel.mp4"),
             },
             {
                 "scenario": "cooking_auto_pass",
@@ -346,7 +357,7 @@ class GovernanceService:
                 "description": "Family cooking recipe lesson with tomato soup and calm narration.",
                 "creator_id": "demo_creator_cooking",
                 "poi": "global",
-                "video_url": "https://example.local/videos/demo-cooking-pass.mp4",
+                "video_url": self._demo_video_source("*normal_cooking*.mp4", fallback="00000_normal_cooking.mp4"),
             },
         ]
         created: list[dict[str, Any]] = []
@@ -363,6 +374,7 @@ class GovernanceService:
                     "content_id": job["content_id"],
                     "job_id": job["job_id"],
                     "title": item["title"],
+                    "video_url": item["video_url"],
                     "recommendation": review["recommendation"],
                     "final_decision": review["final_decision"],
                     "content_status": review["content_status"],
@@ -373,7 +385,133 @@ class GovernanceService:
                     "triggered_rules": review["decision_summary"].get("triggered_rules", []),
                 }
             )
-        return {"batch_id": batch_id, "cleared": cleared, "total": len(created), "items": created}
+        followups = self._seed_demo_followups(created)
+        self._refresh_demo_items(created)
+        return {
+            "batch_id": batch_id,
+            "cleared": cleared,
+            "total": len(created),
+            "items": created,
+            "local_video_count": sum(1 for item in created if str(item.get("video_url", "")).startswith("data/")),
+            **followups,
+        }
+
+    def _seed_demo_followups(self, created: list[dict[str, Any]]) -> dict[str, Any]:
+        """Populate appeal review and flywheel data for the demo workbench."""
+        self.seed_users()
+        by_scenario = {item["scenario"]: item for item in created}
+        appeals: list[dict[str, Any]] = []
+
+        open_appeal = self._seed_demo_appeal(
+            by_scenario.get("marketing_auto_block"),
+            appellant_id="demo_appellant_marketing",
+            reason="创作者认为这是正常优惠说明，请二审复核。",
+        )
+        if open_appeal is not None:
+            appeals.append(open_appeal)
+
+        overturned_appeal = self._seed_demo_appeal(
+            by_scenario.get("drug_violence_auto_block"),
+            appellant_id="demo_appellant_safety",
+            reason="视频素材实际是教育讲解，不应维持拦截。",
+            outcome="overturn",
+            reviewer_id="admin_demo",
+        )
+        if overturned_appeal is not None:
+            appeals.append(overturned_appeal)
+
+        self._seed_demo_quality_samples(by_scenario)
+        return {
+            "appeals_seeded": len(appeals),
+            "appeals": appeals,
+            "flywheel_samples_seeded": self._count_demo_flywheel_samples(created),
+        }
+
+    def _seed_demo_appeal(
+        self,
+        item: dict[str, Any] | None,
+        *,
+        appellant_id: str,
+        reason: str,
+        outcome: str | None = None,
+        reviewer_id: str = "admin_demo",
+    ) -> dict[str, Any] | None:
+        if item is None or item.get("final_decision") != BLOCK:
+            return None
+        appeal = self.submit_appeal(item["content_id"], appellant_id, reason)
+        appeal_id = appeal["appeal_id"]
+        if outcome is None:
+            return {**appeal, "scenario": item["scenario"], "outcome": "open"}
+
+        self.assign_appeal(appeal_id, reviewer_id)
+        decided = self.decide_appeal(
+            appeal_id,
+            reviewer_id,
+            outcome,
+            "演示二审：结合上下文与样本复核后改判。",
+        )
+        return {**decided, "scenario": item["scenario"]}
+
+    def _seed_demo_quality_samples(self, by_scenario: dict[str, dict[str, Any]]) -> None:
+        samples = [
+            ("cooking_auto_pass", PASS, None),
+            ("marketing_auto_block", PASS, None),
+            (
+                "context_mismatch_needs_human_review",
+                BLOCK,
+                {
+                    "is_golden_test": True,
+                    "is_correct": True,
+                    "expected_decision": BLOCK,
+                    "reviewer_decision": BLOCK,
+                },
+            ),
+        ]
+        timestamp = now_iso()
+        with self._session_factory.begin() as session:
+            for scenario, human_decision, golden_result in samples:
+                item = by_scenario.get(scenario)
+                if item is None:
+                    continue
+                machine = session.execute(
+                    select(MachineReview)
+                    .where(MachineReview.content_id == item["content_id"])
+                    .order_by(MachineReview.created_at.desc())
+                    .limit(1)
+                ).scalar_one_or_none()
+                policy_version, rule_version = self._decision_versions(machine)
+                self._record_flywheel_sample(
+                    session,
+                    item["content_id"],
+                    machine.recommendation if machine else "",
+                    human_decision,
+                    golden_result,
+                    policy_version,
+                    rule_version,
+                    timestamp,
+                )
+
+    def _count_demo_flywheel_samples(self, created: list[dict[str, Any]]) -> int:
+        content_ids = [item["content_id"] for item in created]
+        if not content_ids:
+            return 0
+        with self._session_factory() as session:
+            return session.execute(
+                select(func.count()).select_from(FlywheelSample).where(FlywheelSample.content_id.in_(content_ids))
+            ).scalar_one()
+
+    def _refresh_demo_items(self, created: list[dict[str, Any]]) -> None:
+        for item in created:
+            review = self.get_machine_review(item["content_id"])
+            item.update(
+                {
+                    "final_decision": review["final_decision"],
+                    "content_status": review["content_status"],
+                    "task_status": review["task_status"],
+                    "recommendation": review["recommendation"],
+                    "risk_score": review["confidence"],
+                }
+            )
 
     def _run_pipeline_for_demo(self, job_id: str, content_id: str) -> None:
         try:
@@ -799,9 +937,7 @@ class GovernanceService:
                     _parse_iso(timestamp) + timedelta(seconds=settings.sla_default_seconds)
                 ).isoformat()
                 priority = DECISION_PRIORITY.get(final_decision, QueuePriority.NORMAL.value)
-                is_sensitive = final_decision == "critical_escalate" or any(
-                    v.get("severity_suggestion") == "critical" for v in machine["verdicts"]
-                )
+                is_sensitive = False
                 session.add(
                     HumanReviewTask(
                         id=task_id,
@@ -984,6 +1120,8 @@ class GovernanceService:
                     JOIN evidence_packages e ON e.content_id = c.id
                     LEFT JOIN human_review_tasks t ON t.content_id = c.id
                     WHERE m.content_id = :content_id
+                    ORDER BY m.created_at DESC
+                    LIMIT 1
                     """
                 ),
                 {"content_id": content_id},
