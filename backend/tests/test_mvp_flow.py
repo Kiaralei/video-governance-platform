@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -114,23 +115,40 @@ class MvpFlowTest(unittest.TestCase):
                 },
                 set(by_scenario),
             )
-            self.assertEqual(by_scenario["gambling_auto_block"]["policy_decision"], "auto_block")
-            self.assertEqual(by_scenario["drug_violence_auto_block"]["policy_decision"], "auto_block")
-            self.assertEqual(by_scenario["marketing_auto_block"]["policy_decision"], "auto_block")
-            self.assertEqual(
-                by_scenario["context_mismatch_needs_human_review"]["policy_decision"],
-                "needs_human_review",
-            )
-            self.assertEqual(by_scenario["cooking_auto_pass"]["policy_decision"], "auto_pass")
-            self.assertEqual(by_scenario["context_mismatch_needs_human_review"]["content_status"], "human_review")
-            self.assertIsNotNone(by_scenario["context_mismatch_needs_human_review"]["task_id"])
-            self.assertEqual(service.list_queue()["total"], 1)
+            # 注入接口立即返回（policy_decision=processing），机审与申诉/飞轮
+            # 数据由后台线程补齐，前端靠轮询感知——这里同样轮询等待完成。
+            self.assertTrue(all(item["policy_decision"] == "processing" for item in result["items"]))
             self.assertEqual(result["local_video_count"], 5)
-            self.assertGreaterEqual(result["appeals_seeded"], 2)
-            self.assertGreaterEqual(result["flywheel_samples_seeded"], 4)
             self.assertTrue(
                 all(item["video_url"].startswith("data/test_videos/") for item in result["items"])
             )
+
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                if (
+                    service.list_machine_reviews()["total"] == 5
+                    and service.list_appeals()["total"] >= 2
+                    and service.quality_summary()["total_samples"] >= 4
+                ):
+                    break
+                time.sleep(0.2)
+
+            expected_decisions = {
+                "gambling_auto_block": "auto_block",
+                "drug_violence_auto_block": "auto_block",
+                "marketing_auto_block": "auto_block",
+                "context_mismatch_needs_human_review": "needs_human_review",
+                "cooking_auto_pass": "auto_pass",
+            }
+            for scenario, decision in expected_decisions.items():
+                detail = service.get_machine_review(by_scenario[scenario]["content_id"])
+                self.assertEqual(detail["decision_summary"]["final_decision"], decision, scenario)
+            context_detail = service.get_machine_review(
+                by_scenario["context_mismatch_needs_human_review"]["content_id"]
+            )
+            self.assertEqual(context_detail["content_status"], "human_review")
+            self.assertIsNotNone(context_detail["task_id"])
+            self.assertEqual(service.list_queue()["total"], 1)
             self.assertGreaterEqual(service.list_appeals()["total"], 2)
             self.assertGreaterEqual(service.quality_summary()["total_samples"], 4)
 

@@ -192,6 +192,24 @@ export interface MachineReviewRow {
   created_at: string
 }
 
+export interface PipelineJobRow {
+  id: string
+  content_id: string
+  status: string
+  stage: string
+  attempts: number
+  error: string | null
+  title: string
+  content_status: string
+  final_decision: string | null
+  recommendation: string | null
+  confidence: number | null
+  machine_review_id: string | null
+  task_id: string | null
+  task_status: string | null
+  created_at: string
+}
+
 export interface DemoCaseResult {
   scenario: string
   expected_policy_decision: string

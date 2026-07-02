@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path as _Path
+
+# 仅在作为主程序（python -m backend.model_gateway）运行时加载 .env。
+# GatewaySettings 的默认值在类定义时求值，所以必须在 import 段就加载；
+# 但被其他模块（尤其是测试）import 时不能有副作用——否则 .env 里的
+# DATABASE_URL 会泄漏进测试进程，让本应隔离在临时 sqlite 的测试写真实库。
+if __name__ == "__main__":
+    from dotenv import load_dotenv as _load_dotenv
+
+    _load_dotenv(_Path(__file__).resolve().parents[1] / ".env")
+
 import base64
 import hashlib
 import hmac

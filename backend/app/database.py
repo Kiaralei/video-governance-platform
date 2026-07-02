@@ -37,15 +37,17 @@ def normalize_database_url(url: str) -> str:
 
 
 def _resolve_url(db_path: Path | None) -> str:
+    # 显式 db_path（仅测试使用）优先于环境变量：即使 DATABASE_URL 泄漏进
+    # 测试进程，测试也必须落在自己的临时 sqlite，绝不能碰真实库。
+    if db_path is not None:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{db_path}"
     if is_postgres_enabled():
         return normalize_database_url(settings.database_url)
-    if db_path is None:
-        raise RuntimeError(
-            "PostgreSQL DATABASE_URL is required for runtime. "
-            "SQLite is only available for tests that pass an explicit db_path."
-        )
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    return f"sqlite:///{db_path}"
+    raise RuntimeError(
+        "PostgreSQL DATABASE_URL is required for runtime. "
+        "SQLite is only available for tests that pass an explicit db_path."
+    )
 
 
 def create_db_engine(db_path: Path | None = None) -> Engine:

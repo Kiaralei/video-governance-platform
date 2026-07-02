@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .appeals import (
@@ -312,7 +313,15 @@ class GovernanceService:
         return (DEMO_VIDEO_DIR / fallback).as_posix()
 
     def seed_demo_cases(self) -> dict[str, Any]:
-        """Create a stable demo batch that exercises the production routing paths."""
+        """Create a stable demo batch that exercises the production routing paths.
+
+        Phase 1 (synchronous): ingest all items so they appear immediately in the UI
+        as "processing". Phase 2 (background thread): run machine review pipeline for
+        each item, then seed followups (appeals, flywheel). The frontend polls every
+        10s and picks up status changes automatically.
+        """
+        import threading
+
         cleared = self._clear_demo_cases()
         batch_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         examples = [
@@ -366,13 +375,15 @@ class GovernanceService:
                 "video_url": self._demo_video_source("*normal_cooking*.mp4", fallback="00000_normal_cooking.mp4"),
             },
         ]
+
+        # Phase 1: ingest only (fast, no LLM) — items appear as "processing" immediately.
+        # pre_claimed 让任务落库即为 processing 且不派发 Celery，机审只由下面的
+        # 后台线程执行一次，避免与线程 worker / Celery 并发产生重复机审记录。
         created: list[dict[str, Any]] = []
         for item in examples:
             scenario = item.pop("scenario")
             expected = item.pop("expected_policy_decision")
-            job = self.ingest_content(item)
-            self._run_pipeline_for_demo(job["job_id"], job["content_id"])
-            review = self.get_machine_review(job["content_id"])
+            job = self.ingest_content(item, pre_claimed=True)
             created.append(
                 {
                     "scenario": scenario,
@@ -380,26 +391,61 @@ class GovernanceService:
                     "content_id": job["content_id"],
                     "job_id": job["job_id"],
                     "title": item["title"],
-                    "video_url": item["video_url"],
-                    "recommendation": review["recommendation"],
-                    "final_decision": review["final_decision"],
-                    "content_status": review["content_status"],
-                    "task_id": review["task_id"],
-                    "task_status": review["task_status"],
-                    "policy_decision": review["decision_summary"]["final_decision"],
-                    "risk_score": review["confidence"],
-                    "triggered_rules": review["decision_summary"].get("triggered_rules", []),
+                    "video_url": item.get("video_url", ""),
+                    "recommendation": None,
+                    "final_decision": None,
+                    "content_status": "machine_processing",
+                    "task_id": None,
+                    "task_status": None,
+                    "policy_decision": "processing",
+                    "risk_score": None,
+                    "triggered_rules": [],
                 }
             )
-        followups = self._seed_demo_followups(created)
-        self._refresh_demo_items(created)
+
+        # Phase 2: run evidence extraction + machine review in background thread
+        jobs = [(item["job_id"], item["content_id"]) for item in created]
+
+        def _background_pipeline() -> None:
+            for job_id, content_id in jobs:
+                try:
+                    self.extract_evidence_stage(job_id)
+                    self.run_machine_review_stage(job_id)
+                except Exception:
+                    pass
+            try:
+                finished: list[dict[str, Any]] = []
+                for item in created:
+                    try:
+                        review = self.get_machine_review(item["content_id"])
+                        finished.append({**item, **{
+                            "recommendation": review["recommendation"],
+                            "final_decision": review["final_decision"],
+                            "content_status": review["content_status"],
+                            "task_id": review["task_id"],
+                            "task_status": review["task_status"],
+                            "policy_decision": review["decision_summary"]["final_decision"],
+                            "risk_score": review["confidence"],
+                            "triggered_rules": review["decision_summary"].get("triggered_rules", []),
+                        }})
+                    except Exception:
+                        finished.append(item)
+                self._seed_demo_followups(finished)
+                self._refresh_demo_items(finished)
+            except Exception:
+                pass
+
+        threading.Thread(target=_background_pipeline, daemon=True).start()
+
         return {
             "batch_id": batch_id,
             "cleared": cleared,
             "total": len(created),
             "items": created,
             "local_video_count": sum(1 for item in created if str(item.get("video_url", "")).startswith("data/")),
-            **followups,
+            "appeals_seeded": 0,
+            "flywheel_samples_seeded": 0,
+            "async": True,
         }
 
     def _seed_demo_followups(self, created: list[dict[str, Any]]) -> dict[str, Any]:
@@ -532,15 +578,6 @@ class GovernanceService:
                 }
             )
 
-    def _run_pipeline_for_demo(self, job_id: str, content_id: str) -> None:
-        try:
-            self.claim_pipeline_job(job_id)
-            self.extract_evidence_stage(job_id)
-            self.run_machine_review_stage(job_id)
-        except Exception as exc:
-            self._mark_pipeline_failed(job_id, content_id, exc)
-            raise
-
     def _clear_demo_cases(self) -> int:
         with self._session_factory.begin() as session:
             content_ids = session.execute(
@@ -568,7 +605,12 @@ class GovernanceService:
             session.execute(delete(ContentItem).where(ContentItem.id.in_(content_ids)))
         return len(content_ids)
 
-    def ingest_content(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def ingest_content(self, payload: dict[str, Any], *, pre_claimed: bool = False) -> dict[str, Any]:
+        """摄取内容并入队机审。
+
+        pre_claimed=True 时任务直接以 processing 落库且不派发 Celery——调用方
+        （如演示注入）自己负责跑流水线，线程 worker 只领 queued 任务也不会抢。
+        """
         title = str(payload.get("title", "")).strip()
         description = str(payload.get("description", "")).strip()
         creator_id = str(payload.get("creator_id", "anonymous")).strip() or "anonymous"
@@ -604,7 +646,7 @@ class GovernanceService:
                     poi=poi_name,
                     video_url=payload.get("video_url", ""),
                     business_context_json=dumps(business_context),
-                    status="machine_queued",
+                    status="machine_processing" if pre_claimed else "machine_queued",
                     final_decision=None,
                     created_at=timestamp,
                     updated_at=timestamp,
@@ -614,14 +656,14 @@ class GovernanceService:
                 PipelineJob(
                     id=job_id,
                     content_id=content_id,
-                    status=JOB_QUEUED,
-                    stage="queued",
-                    attempts=0,
+                    status=JOB_PROCESSING if pre_claimed else JOB_QUEUED,
+                    stage="evidence_extraction" if pre_claimed else "queued",
+                    attempts=1 if pre_claimed else 0,
                     max_attempts=3,
                     error=None,
                     created_at=timestamp,
                     updated_at=timestamp,
-                    started_at=None,
+                    started_at=timestamp if pre_claimed else None,
                     finished_at=None,
                 )
             )
@@ -638,8 +680,18 @@ class GovernanceService:
                     "critical_detection_enabled": False,
                 },
             )
+            if pre_claimed:
+                self._append_audit(
+                    session,
+                    content_id=content_id,
+                    task_id=None,
+                    actor="pipeline_worker",
+                    action="pipeline_started",
+                    detail={"job_id": job_id},
+                )
 
-        self._dispatch_pipeline(job_id)
+        if not pre_claimed:
+            self._dispatch_pipeline(job_id)
         return self.get_pipeline_job(job_id)
 
     def _dispatch_pipeline(self, job_id: str) -> None:
@@ -895,6 +947,20 @@ class GovernanceService:
             job = session.get(PipelineJob, job_id)
             if job is None:
                 raise NotFoundError("流水线任务不存在")
+            job.stage = "llm_review"
+            job.updated_at = timestamp
+        timestamp = now_iso()
+        try:
+            self._machine_review_transaction(job_id, timestamp)
+        except IntegrityError:
+            # 并发兜底：多条处理路径（线程 worker / Celery / 演示注入）同时机审同一内容时，
+            # 唯一约束 uq_machine_reviews_content_id 会拦下后写入的一方；胜者已完成
+            # 路由与任务收尾（各路径共享同一 job 行），这里直接放弃本次结果即可。
+            return
+
+    def _machine_review_transaction(self, job_id: str, timestamp: str) -> None:
+        with self._session_factory.begin() as session:
+            job = session.get(PipelineJob, job_id)
             content = session.get(ContentItem, job.content_id)
             existing_review = session.execute(
                 select(MachineReview.id).where(MachineReview.content_id == job.content_id)
@@ -908,7 +974,7 @@ class GovernanceService:
                 .limit(1)
             ).scalar_one_or_none()
             if evidence_row is None:
-                raise NotFoundError("璇佹嵁鍖呬笉瀛樺湪")
+                raise NotFoundError("证据包不存在")
             evidence = loads(evidence_row.package_json)
             text_blob = f"{content.title} {content.description}".lower()
             machine_review_id = new_id("mr")
@@ -1230,18 +1296,50 @@ class GovernanceService:
     def get_evidence_media(self, evidence_id: str) -> dict[str, Any]:
         evidence = self.get_evidence(evidence_id)
         asset = evidence.get("media_asset") or {}
+        mime_type = asset.get("mime_type") or "application/octet-stream"
+
+        # Strategy 1: use local_path directly if it's a valid local file
         local_path = str(asset.get("local_path") or "").strip()
-        if asset.get("status") != "stored" or not local_path:
-            raise NotFoundError("evidence media is unavailable")
-        path = Path(local_path).resolve()
-        root = settings.media_dir.resolve()
-        try:
-            path.relative_to(root)
-        except ValueError as exc:
-            raise NotFoundError("invalid evidence media path") from exc
-        if not path.is_file():
-            raise NotFoundError("evidence media file not found")
-        return {"path": str(path), "media_type": asset.get("mime_type") or "application/octet-stream"}
+        if local_path:
+            path = Path(local_path)
+            if not path.is_absolute():
+                path = ROOT_DIR / path
+            path = path.resolve()
+            if path.is_file():
+                return {"path": str(path), "media_type": mime_type}
+
+        # Strategy 2: reconstruct from SHA256 in media_dir
+        sha256 = asset.get("sha256", "")
+        ext = asset.get("extension", ".mp4")
+        if sha256:
+            reconstructed = settings.media_dir / sha256[:2] / f"{sha256}{ext}"
+            if reconstructed.resolve().is_file():
+                return {"path": str(reconstructed.resolve()), "media_type": mime_type}
+
+        # Strategy 3: fall back to original video source file
+        source = str(asset.get("source") or "")
+        if source and not source.startswith(("http://", "https://")):
+            source_path = Path(source)
+            if not source_path.is_absolute():
+                source_path = ROOT_DIR / source_path
+            source_path = source_path.resolve()
+            if source_path.is_file():
+                return {"path": str(source_path), "media_type": mime_type}
+
+        # Strategy 4: use content video_url
+        content_id = evidence.get("content_id", "")
+        if content_id:
+            with self._session_factory() as session:
+                content = session.get(ContentItem, content_id)
+                if content and content.video_url:
+                    video_path = Path(content.video_url)
+                    if not video_path.is_absolute():
+                        video_path = ROOT_DIR / video_path
+                    video_path = video_path.resolve()
+                    if video_path.is_file():
+                        return {"path": str(video_path), "media_type": mime_type}
+
+        raise NotFoundError("evidence media is unavailable")
 
     def claim_task(self, task_id: str, reviewer_id: str) -> dict[str, Any]:
         """领取即加案件锁（Stage 5）。锁未过期时他人不能抢；本人可幂等续租；锁过期可接管。"""

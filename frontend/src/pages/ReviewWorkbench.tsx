@@ -182,8 +182,7 @@ function VideoEvidence({ current }: { current: CaseDetail }) {
   const meta = current.evidence.video_meta || {}
   const asset = current.evidence.media_asset || {}
   const videoUrl = current.content.video_url || String(meta.source_url || meta.source || '')
-  const mediaAvailable = Boolean(evidenceId && asset.status === 'stored')
-  const mediaSrc = mediaAvailable ? `/api/v1/evidence/${encodeURIComponent(evidenceId || '')}/media` : ''
+  const mediaSrc = evidenceId ? `/api/v1/evidence/${encodeURIComponent(evidenceId || '')}/media` : ''
   const remoteVideoSrc = /^https?:\/\//.test(videoUrl) ? videoUrl : ''
   const playerSrc = mediaSrc || remoteVideoSrc
   const frameText = (frameId: string) => [
@@ -197,7 +196,7 @@ function VideoEvidence({ current }: { current: CaseDetail }) {
         <div>
           <Typography.Title heading={6}>视频证据</Typography.Title>
           <div className="status-line">
-            <StatusTag kind="source" value={mediaAvailable || remoteVideoSrc ? 'available' : 'fallback'} />
+            <StatusTag kind="source" value={mediaSrc || remoteVideoSrc ? 'available' : 'fallback'} />
             <Tag color="gray">{String(meta.source_type || asset.source_type || 'text_only')}</Tag>
             {meta.duration_ms != null && <Tag color="arcoblue">{Math.round(Number(meta.duration_ms) / 1000)}s</Tag>}
             {meta.width != null && meta.height != null && <Tag color="arcoblue">{String(meta.width)}x{String(meta.height)}</Tag>}

@@ -1,8 +1,8 @@
-import { Button, Card, Message, Progress, Space, Statistic, Table, Tag, Tooltip } from '@arco-design/web-react'
+import { Button, Card, Message, Progress, Space, Statistic, Steps, Table, Tag, Tooltip } from '@arco-design/web-react'
 import { IconPlayArrow, IconRefresh } from '@arco-design/web-react/icon'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { DashboardSummary, DemoCasesResponse, DimensionVerdict, MachineReviewRow } from '../api/types'
+import type { DashboardSummary, DemoCasesResponse, DimensionVerdict, MachineReviewRow, PipelineJobRow } from '../api/types'
 import { PageHeader } from '../components/PageHeader'
 import { StatusTag, statusMeta } from '../components/StatusTag'
 
@@ -46,27 +46,29 @@ export function MachineMonitor() {
   const summary = useQuery({
     queryKey: ['dashboard'],
     queryFn: async () => (await api.get<DashboardSummary>('/dashboard/summary')).data,
-    refetchInterval: 10000,
+    refetchInterval: 3000,
   })
   const reviews = useQuery({
     queryKey: ['machine-reviews'],
     queryFn: async () => (await api.get('/machine/reviews')).data.items as MachineReviewRow[],
-    refetchInterval: 10000,
+    refetchInterval: 3000,
   })
+  const pipelineJobs = useQuery({
+    queryKey: ['pipeline-jobs'],
+    queryFn: async () => (await api.get('/pipeline/jobs')).data.items as PipelineJobRow[],
+    refetchInterval: 2000,
+  })
+  const inProgressJobs = (pipelineJobs.data || []).filter(
+    (j) => j.status === 'queued' || j.status === 'processing'
+  )
   const demo = useMutation({
     mutationFn: async () => (await api.post<DemoCasesResponse>('/dev/demo-cases')).data,
     onSuccess: (data) => {
-      const human = data.items.filter((item) => item.policy_decision === 'needs_human_review').length
-      const blocked = data.items.filter((item) => item.final_decision === 'block').length
-      const passed = data.items.filter((item) => item.final_decision === 'pass').length
-      const localVideos = data.local_video_count ?? 0
-      const appeals = data.appeals_seeded ?? 0
-      const flywheel = data.flywheel_samples_seeded ?? 0
-      const cleared = data.cleared ? `，已清理 ${data.cleared} 条旧演示数据` : ''
-      Message.success(`已注入 ${data.total} 条演示案例：${blocked} 拦截 / ${human} 人审 / ${passed} 通过${cleared}`)
-      Message.info(`演示数据已关联本地视频 ${localVideos} 条，申诉 ${appeals} 条，回流样本 ${flywheel} 条`)
+      const cleared = data.cleared ? `，已清理 ${data.cleared} 条旧数据` : ''
+      Message.success(`已注入 ${data.total} 条演示案例，后台机审处理中${cleared}`)
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['machine-reviews'] })
+      qc.invalidateQueries({ queryKey: ['pipeline-jobs'] })
       qc.invalidateQueries({ queryKey: ['queue'] })
       qc.invalidateQueries({ queryKey: ['appeals'] })
       qc.invalidateQueries({ queryKey: ['quality-summary'] })
@@ -157,6 +159,45 @@ export function MachineMonitor() {
           </div>
         </Card>
       </div>
+
+      {inProgressJobs.length > 0 && (
+        <Card title={`处理中 (${inProgressJobs.length})`}>
+          <Table<PipelineJobRow>
+            rowKey="id"
+            data={inProgressJobs}
+            pagination={false}
+            size="small"
+            columns={[
+              { title: '标题', dataIndex: 'title', ellipsis: true, width: 260 },
+              {
+                title: '阶段',
+                dataIndex: 'stage',
+                width: 360,
+                render: (stage: string) => {
+                  const stages = ['queued', 'evidence_extraction', 'machine_review', 'llm_review']
+                  const labels = ['排队', '证据提取', '安全初筛', 'LLM 审查']
+                  const idx = stages.indexOf(stage)
+                  return (
+                    <Steps size="small" current={idx < 0 ? 0 : idx + 1} style={{ maxWidth: 340 }}>
+                      {labels.map((l) => <Steps.Step key={l} title={l} />)}
+                    </Steps>
+                  )
+                },
+              },
+              {
+                title: '状态',
+                dataIndex: 'status',
+                width: 100,
+                render: (s: string) => (
+                  <Tag color={s === 'processing' ? 'orangered' : 'blue'}>
+                    {s === 'processing' ? '处理中' : '排队中'}
+                  </Tag>
+                ),
+              },
+            ]}
+          />
+        </Card>
+      )}
 
       <Card title="最新机审结果">
         <Table<MachineReviewRow>

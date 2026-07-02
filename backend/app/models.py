@@ -102,7 +102,10 @@ class MachineReview(Base):
     __tablename__ = "machine_reviews"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    content_id: Mapped[str] = mapped_column(String, ForeignKey("content_items.id"), nullable=False)
+    # 每条内容至多一份机审结果：并发路径（线程 worker / Celery / 演示注入）靠它兜底防重。
+    content_id: Mapped[str] = mapped_column(
+        String, ForeignKey("content_items.id"), nullable=False, unique=True
+    )
     recommendation: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     rationale: Mapped[str] = mapped_column(Text, nullable=False)
