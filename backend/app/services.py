@@ -22,7 +22,13 @@ from .decision_engine import DecisionEngineService, StrategyRegistry
 from .decision_engine.types import VALID_STATUS_TRANSITIONS, DimensionStatus
 from .evidence import EvidenceExtractor
 from .llm_review import is_llm_configured
-from .quality import FlywheelSource, classify_sample, fleiss_kappa, passes_quality_gate
+from .quality import (
+    FlywheelSource,
+    classify_sample,
+    fleiss_kappa,
+    flywheel_source_meta,
+    passes_quality_gate,
+)
 from .realtime import hub
 from .sor import SOR_TEMPLATE_ID, render_sor
 from .review_workflow import DECISION_PRIORITY, QueuePriority, ReviewStatus, can_transition
@@ -401,9 +407,22 @@ class GovernanceService:
         self.seed_users()
         by_scenario = {item["scenario"]: item for item in created}
         appeals: list[dict[str, Any]] = []
+        blocked_items = [item for item in created if item.get("final_decision") == BLOCK]
+
+        def _blocked_scenario(name: str) -> dict[str, Any] | None:
+            item = by_scenario.get(name)
+            return item if item is not None and item.get("final_decision") == BLOCK else None
+
+        open_target = _blocked_scenario("marketing_auto_block")
+        if open_target is None and blocked_items:
+            open_target = blocked_items[0]
+
+        overturn_target = _blocked_scenario("drug_violence_auto_block")
+        if overturn_target is None or overturn_target is open_target:
+            overturn_target = next((item for item in blocked_items if item is not open_target), None)
 
         open_appeal = self._seed_demo_appeal(
-            by_scenario.get("marketing_auto_block"),
+            open_target,
             appellant_id="demo_appellant_marketing",
             reason="创作者认为这是正常优惠说明，请二审复核。",
         )
@@ -411,9 +430,9 @@ class GovernanceService:
             appeals.append(open_appeal)
 
         overturned_appeal = self._seed_demo_appeal(
-            by_scenario.get("drug_violence_auto_block"),
+            overturn_target,
             appellant_id="demo_appellant_safety",
-            reason="视频素材实际是教育讲解，不应维持拦截。",
+            reason="演示误判申诉：提交补充上下文后触发二审改判。",
             outcome="overturn",
             reviewer_id="admin_demo",
         )
@@ -1208,6 +1227,22 @@ class GovernanceService:
             raise NotFoundError("evidence frame file not found")
         return {"path": str(path), "media_type": "image/jpeg"}
 
+    def get_evidence_media(self, evidence_id: str) -> dict[str, Any]:
+        evidence = self.get_evidence(evidence_id)
+        asset = evidence.get("media_asset") or {}
+        local_path = str(asset.get("local_path") or "").strip()
+        if asset.get("status") != "stored" or not local_path:
+            raise NotFoundError("evidence media is unavailable")
+        path = Path(local_path).resolve()
+        root = settings.media_dir.resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise NotFoundError("invalid evidence media path") from exc
+        if not path.is_file():
+            raise NotFoundError("evidence media file not found")
+        return {"path": str(path), "media_type": asset.get("mime_type") or "application/octet-stream"}
+
     def claim_task(self, task_id: str, reviewer_id: str) -> dict[str, Any]:
         """领取即加案件锁（Stage 5）。锁未过期时他人不能抢；本人可幂等续租；锁过期可接管。"""
         reviewer_id = reviewer_id.strip() or "reviewer_demo"
@@ -1858,7 +1893,10 @@ class GovernanceService:
                     )
                 # 恢复连锁 ④改判样本回流：落一条 correction 样本供数据飞轮消费。
                 machine = session.execute(
-                    select(MachineReview).where(MachineReview.content_id == content_id)
+                    select(MachineReview)
+                    .where(MachineReview.content_id == content_id)
+                    .order_by(MachineReview.created_at.desc())
+                    .limit(1)
                 ).scalar_one_or_none()
                 policy_version, rule_version = self._decision_versions(machine)
                 self._record_flywheel_sample(
@@ -1958,6 +1996,15 @@ class GovernanceService:
                     if row.dimension_axis != spec["dimension_axis"]:
                         row.dimension_axis = spec["dimension_axis"]
                         row.updated_at = timestamp
+                    if not row.prompt_template_id and spec.get("prompt_template_id"):
+                        row.prompt_template_id = spec["prompt_template_id"]
+                        row.updated_at = timestamp
+                    if not row.sor_template_id and spec.get("sor_template_id"):
+                        row.sor_template_id = spec["sor_template_id"]
+                        row.updated_at = timestamp
+                    if row.status == DimensionStatus.ARCHIVED.value and row.enabled:
+                        row.enabled = False
+                        row.updated_at = timestamp
             has_policy = session.execute(
                 select(func.count()).select_from(PolicyVersion)
             ).scalar_one()
@@ -2032,16 +2079,38 @@ class GovernanceService:
 
     # 治理敏感字段：改动它们等于改变一个维度的判罚强度，必须重新走 Checker 审批。
     _SENSITIVE_DIMENSION_FIELDS = {
-        "enabled", "llm_review_enabled", "auto_block_threshold", "human_review_threshold",
+        "dimension_axis", "enabled", "llm_review_enabled", "auto_block_threshold",
+        "human_review_threshold", "prompt_template_id", "sor_template_id",
     }
 
     def update_dimension(self, dimension_id: str, patch: dict[str, Any], actor: str) -> dict[str, Any]:
         timestamp = now_iso()
         allowed = {
-            "dimension_name", "enabled", "llm_review_enabled", "auto_block_threshold",
+            "dimension_name", "dimension_axis", "enabled", "llm_review_enabled", "auto_block_threshold",
             "human_review_threshold", "prompt_template_id", "sor_template_id",
         }
-        touches_sensitive = bool(self._SENSITIVE_DIMENSION_FIELDS & set(patch.keys()))
+        normalized: dict[str, Any] = {}
+        for key, value in patch.items():
+            if key not in allowed:
+                continue
+            if key == "dimension_name":
+                next_value = str(value or "").strip()
+                if not next_value:
+                    raise ValidationError("dimension_name 不能为空")
+            elif key == "dimension_axis":
+                next_value = str(value or "").strip()
+                if next_value not in {"safety", "quality", "business"}:
+                    raise ValidationError("dimension_axis 只能是 safety / quality / business")
+            elif key in {"enabled", "llm_review_enabled"}:
+                next_value = bool(value)
+            elif key in {"auto_block_threshold", "human_review_threshold"}:
+                next_value = float(value)
+            else:
+                next_value = str(value or "").strip()
+            normalized[key] = next_value
+        if not normalized:
+            return {"dimension_id": dimension_id, "changed": False}
+        touches_sensitive = bool(self._SENSITIVE_DIMENSION_FIELDS & set(normalized.keys()))
         with self._session_factory.begin() as session:
             row = session.get(DimensionRegistry, self._dimension_pk(session, dimension_id))
             if row is None:
@@ -2051,9 +2120,7 @@ class GovernanceService:
             if row.status == DimensionStatus.ACTIVE.value and touches_sensitive:
                 raise ConflictError("active 维度的治理配置已冻结，请先 transition 到 shadow 再修改")
             changed: dict[str, Any] = {}
-            for key, value in patch.items():
-                if key not in allowed:
-                    continue
+            for key, value in normalized.items():
                 setattr(row, key, value)
                 changed[key] = value
             if "auto_block_threshold" in changed and not (0 <= float(row.auto_block_threshold) <= 1):
@@ -2092,6 +2159,8 @@ class GovernanceService:
             # 防止基于陈旧批准反复 active<->shadow 横跳。
             if row.status == DimensionStatus.ACTIVE.value and target_status != DimensionStatus.ACTIVE.value:
                 row.approved_by = None
+            if target_status == DimensionStatus.ARCHIVED.value:
+                row.enabled = False
             row.status = target_status
             row.updated_at = timestamp
             self._append_audit(
@@ -2132,6 +2201,8 @@ class GovernanceService:
             "llm_review_enabled": row.llm_review_enabled,
             "auto_block_threshold": row.auto_block_threshold,
             "human_review_threshold": row.human_review_threshold,
+            "prompt_template_id": row.prompt_template_id,
+            "sor_template_id": row.sor_template_id,
             "status": row.status,
             "version": row.version,
             "created_by": row.created_by,
@@ -2402,8 +2473,17 @@ class GovernanceService:
         override_rate = round(disagreements / classified, 4) if classified else 0.0
         overturn_rate = round(overturned / appeals_total, 4) if appeals_total else 0.0
         golden_accuracy = round(golden_correct / golden_total, 4) if golden_total else None
+        source_breakdown = [
+            {
+                "source_type": source_type,
+                **flywheel_source_meta(source_type),
+                "count": count,
+            }
+            for source_type, count in sorted(source_counts.items())
+        ]
         return {
             "flywheel_by_source": source_counts,
+            "flywheel_sources": source_breakdown,
             "total_samples": total_samples,
             "passed_quality_gate": passed_samples,
             "golden": {"total": golden_total, "correct": golden_correct, "accuracy": golden_accuracy},
@@ -2431,9 +2511,11 @@ class GovernanceService:
         return fleiss_kappa(list(ratings_by_content.values()), categories=[PASS, BLOCK])
 
     def _flywheel_summary(self, row: FlywheelSample) -> dict[str, Any]:
+        source_meta = flywheel_source_meta(row.source_type, row.error_type)
         return {
             "sample_id": row.id,
             "source_type": row.source_type,
+            **source_meta,
             "content_id": row.content_id,
             "dimension_id": row.dimension_id,
             "machine_decision": row.machine_decision,
@@ -2868,6 +2950,8 @@ _DEFAULT_DIMENSIONS: list[dict[str, Any]] = [
         "llm_review_enabled": True,
         "auto_block_threshold": 0.90,
         "human_review_threshold": 0.50,
+        "prompt_template_id": "prompt.general_policy.v1",
+        "sor_template_id": "sor.general_policy.v1",
     },
     {
         "dimension_id": "dim_gambling",
@@ -2875,6 +2959,8 @@ _DEFAULT_DIMENSIONS: list[dict[str, Any]] = [
         "dimension_axis": "safety",
         "auto_block_threshold": 0.90,
         "human_review_threshold": 0.50,
+        "prompt_template_id": "prompt.gambling.v1",
+        "sor_template_id": "sor.gambling.v1",
     },
     {
         "dimension_id": "dim_drug_violence",
@@ -2882,6 +2968,8 @@ _DEFAULT_DIMENSIONS: list[dict[str, Any]] = [
         "dimension_axis": "safety",
         "auto_block_threshold": 0.90,
         "human_review_threshold": 0.50,
+        "prompt_template_id": "prompt.drug_violence.v1",
+        "sor_template_id": "sor.drug_violence.v1",
     },
     {
         "dimension_id": "dim_minor_compliance",
@@ -2889,6 +2977,8 @@ _DEFAULT_DIMENSIONS: list[dict[str, Any]] = [
         "dimension_axis": "safety",
         "auto_block_threshold": 0.90,
         "human_review_threshold": 0.50,
+        "prompt_template_id": "prompt.minor_compliance.v1",
+        "sor_template_id": "sor.minor_compliance.v1",
     },
     {
         "dimension_id": "dim_marketing_review",
@@ -2896,6 +2986,8 @@ _DEFAULT_DIMENSIONS: list[dict[str, Any]] = [
         "dimension_axis": "quality",
         "auto_block_threshold": 0.85,
         "human_review_threshold": 0.50,
+        "prompt_template_id": "prompt.marketing_review.v1",
+        "sor_template_id": "sor.marketing_review.v1",
     },
     {
         "dimension_id": "dim_poi_match",
@@ -2903,6 +2995,8 @@ _DEFAULT_DIMENSIONS: list[dict[str, Any]] = [
         "dimension_axis": "business",
         "auto_block_threshold": 0.80,
         "human_review_threshold": 0.50,
+        "prompt_template_id": "prompt.poi_match.v1",
+        "sor_template_id": "sor.poi_match.v1",
     },
 ]
 

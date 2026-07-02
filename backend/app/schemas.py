@@ -85,10 +85,21 @@ class CreateDimensionRequest(BaseModel):
     llm_review_enabled: bool = Field(True, description="是否触发 LLM 审查")
     auto_block_threshold: float = Field(0.90, description="自动拦截置信度阈值")
     human_review_threshold: float = Field(0.50, description="进人审置信度阈值")
+    prompt_template_id: str = Field("", description="该维度使用的 LLM 提示词模板 ID")
+    sor_template_id: str = Field("", description="该维度使用的处置理由模板 ID")
 
 
 class UpdateDimensionRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
+
+    dimension_name: Optional[str] = Field(None, description="维度人读名称")
+    dimension_axis: Optional[str] = Field(None, description="safety / quality / business")
+    enabled: Optional[bool] = Field(None, description="是否启用")
+    llm_review_enabled: Optional[bool] = Field(None, description="是否触发 LLM 审查")
+    auto_block_threshold: Optional[float] = Field(None, description="自动拦截置信度阈值")
+    human_review_threshold: Optional[float] = Field(None, description="进人审置信度阈值")
+    prompt_template_id: Optional[str] = Field(None, description="该维度使用的 LLM 提示词模板 ID")
+    sor_template_id: Optional[str] = Field(None, description="该维度使用的处置理由模板 ID")
 
 
 class TransitionRequest(BaseModel):

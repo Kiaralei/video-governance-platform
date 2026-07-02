@@ -21,6 +21,41 @@ class FlywheelSource(str, Enum):
     CORRECTION = "correction"       # 申诉改判 -> 改判样本
 
 
+SOURCE_META: dict[str, dict[str, str]] = {
+    FlywheelSource.GROUND_TRUTH.value: {
+        "label": "人审确认样本",
+        "description": "机审与人审一致，或机审不确定后由人审给出最终答案，可作为稳定监督样本。",
+    },
+    FlywheelSource.DISAGREEMENT.value: {
+        "label": "人机分歧样本",
+        "description": "机审建议与人审裁定不一致，用于定位机审过严或漏判。",
+    },
+    FlywheelSource.GOLDEN.value: {
+        "label": "质检黄金题",
+        "description": "已知答案的审核题，用于校准审核员质量；只有答对的样本通过质量门。",
+    },
+    FlywheelSource.CORRECTION.value: {
+        "label": "申诉改判样本",
+        "description": "申诉复核推翻原裁定后沉淀的纠错样本，用于修正策略或模型。",
+    },
+}
+
+ERROR_LABELS = {
+    "overkill": "机审过严",
+    "miss": "机审漏判",
+}
+
+
+def flywheel_source_meta(source_type: str, error_type: str = "") -> dict[str, str]:
+    meta = SOURCE_META.get(source_type, {"label": source_type or "未知来源", "description": ""})
+    error_label = ERROR_LABELS.get(error_type, "")
+    return {
+        "source_label": meta["label"],
+        "source_description": meta["description"],
+        "error_label": error_label,
+    }
+
+
 def fleiss_kappa(ratings: list[list[str]], categories: Optional[list[str]] = None) -> dict:
     """Fleiss' Kappa。ratings: 每个 item 一个评分列表（同一 item 多个评审者的裁定）。
 

@@ -25,9 +25,9 @@ const STATUS: Record<StatusKind, Record<string, { label: string; color: string }
   },
   lifecycle: {
     draft: { label: '草稿', color: 'gray' },
-    shadow: { label: '影子运行', color: 'purple' },
+    shadow: { label: '试运行', color: 'purple' },
     active: { label: '生效中', color: 'green' },
-    archived: { label: '已归档', color: 'gray' },
+    archived: { label: '已停用', color: 'gray' },
   },
   appeal: {
     open: { label: '待领取', color: 'orange' },

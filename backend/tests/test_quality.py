@@ -82,6 +82,8 @@ class FlywheelIntegrationTest(unittest.TestCase):
             samples = service.list_flywheel_samples()["items"]
             self.assertEqual(len(samples), 1)
             self.assertEqual(samples[0]["source_type"], "ground_truth")
+            self.assertEqual(samples[0]["source_label"], "人审确认样本")
+            self.assertIn("监督样本", samples[0]["source_description"])
             self.assertEqual(samples[0]["error_type"], "")
 
     def test_ground_truth_sample_on_agreement(self):
@@ -122,6 +124,7 @@ class FlywheelIntegrationTest(unittest.TestCase):
             corrections = service.list_flywheel_samples(source_type="correction")["items"]
             self.assertEqual(len(corrections), 1)
             self.assertTrue(corrections[0]["is_correction"])
+            self.assertEqual(corrections[0]["source_label"], "申诉改判样本")
             self.assertEqual(corrections[0]["final_decision"], "pass")
 
     def test_quality_summary_and_jsonl_export(self):

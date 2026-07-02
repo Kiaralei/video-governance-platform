@@ -244,6 +244,9 @@ class ServiceIntegrationTest(unittest.TestCase):
             self.assertIn("dim_general_policy", ids)
             self.assertIn("dim_gambling", ids)
             self.assertTrue(all(d["status"] == "active" for d in dims if d["dimension_id"] != "dim_test_custom"))
+            defaults = {d["dimension_id"]: d for d in dims}
+            self.assertEqual(defaults["dim_general_policy"]["prompt_template_id"], "prompt.general_policy.v1")
+            self.assertEqual(defaults["dim_gambling"]["sor_template_id"], "sor.gambling.v1")
 
     def test_lifecycle_transitions_and_maker_checker(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -266,6 +269,13 @@ class ServiceIntegrationTest(unittest.TestCase):
             service.transition_dimension("dim_test_custom", "active", actor="pm_1")
             dims = {d["dimension_id"]: d for d in service.list_dimensions()["items"]}
             self.assertEqual(dims["dim_test_custom"]["status"], "active")
+            service.transition_dimension("dim_test_custom", "archived", actor="pm_1")
+            dims = {d["dimension_id"]: d for d in service.list_dimensions()["items"]}
+            self.assertEqual(dims["dim_test_custom"]["status"], "archived")
+            self.assertFalse(dims["dim_test_custom"]["enabled"])
+            service.transition_dimension("dim_test_custom", "draft", actor="pm_1")
+            dims = {d["dimension_id"]: d for d in service.list_dimensions()["items"]}
+            self.assertEqual(dims["dim_test_custom"]["status"], "draft")
 
     def test_active_dimension_config_is_frozen_against_single_actor(self):
         # 回归：单人不能在生产悄悄削弱已上线维度（绕过 Maker-Checker）。
@@ -293,6 +303,40 @@ class ServiceIntegrationTest(unittest.TestCase):
             service.transition_dimension("dim_test_custom", "active", actor="pm_1")
             dims = {d["dimension_id"]: d for d in service.list_dimensions()["items"]}
             self.assertEqual(dims["dim_test_custom"]["status"], "active")
+
+            with self.assertRaises(Exception):
+                service.update_dimension("dim_test_custom", {"prompt_template_id": "prompt.weakened.v2"}, actor="pm_1")
+
+    def test_policy_template_fields_are_returned_and_mutable_before_active(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self._service(tmp)
+            service.create_dimension(
+                {
+                    "dimension_id": "dim_test_custom",
+                    "dimension_name": "测试维度",
+                    "dimension_axis": "safety",
+                    "enabled": True,
+                    "prompt_template_id": "prompt.test.v1",
+                    "sor_template_id": "sor.test.v1",
+                },
+                actor="pm_1",
+            )
+            service.update_dimension(
+                "dim_test_custom",
+                {
+                    "dimension_axis": "quality",
+                    "llm_review_enabled": False,
+                    "prompt_template_id": "prompt.test.v2",
+                    "sor_template_id": "sor.test.v2",
+                },
+                actor="pm_1",
+            )
+            dims = {d["dimension_id"]: d for d in service.list_dimensions()["items"]}
+            custom = dims["dim_test_custom"]
+            self.assertEqual(custom["dimension_axis"], "quality")
+            self.assertFalse(custom["llm_review_enabled"])
+            self.assertEqual(custom["prompt_template_id"], "prompt.test.v2")
+            self.assertEqual(custom["sor_template_id"], "sor.test.v2")
 
     def test_zero_modification_new_dimension_takes_effect(self):
         with tempfile.TemporaryDirectory() as tmp:

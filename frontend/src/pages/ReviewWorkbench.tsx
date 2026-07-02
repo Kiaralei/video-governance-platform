@@ -4,6 +4,7 @@ import {
   Card,
   Input,
   Message,
+  Modal,
   Popconfirm,
   Space,
   Statistic,
@@ -143,6 +144,12 @@ function showValue(value?: string | null) {
   return value && value.trim() ? value : '—'
 }
 
+type EvidenceFrame = NonNullable<EvidencePackage['frames']>[number]
+
+function evidenceFrameSrc(evidenceId: string | undefined, frameId: string) {
+  return `/api/v1/evidence/${encodeURIComponent(evidenceId || '')}/frames/${encodeURIComponent(frameId)}`
+}
+
 function BusinessContextCard({ current }: { current: CaseDetail }) {
   const context = current.content.business_context || {}
   const poi = context.poi || {}
@@ -169,46 +176,94 @@ function BusinessContextCard({ current }: { current: CaseDetail }) {
 }
 
 function VideoEvidence({ current }: { current: CaseDetail }) {
+  const [previewFrame, setPreviewFrame] = useState<EvidenceFrame | null>(null)
   const evidenceId = current.task.evidence_package_id || current.evidence.ep_id
   const frames = current.evidence.frames || []
   const meta = current.evidence.video_meta || {}
+  const asset = current.evidence.media_asset || {}
   const videoUrl = current.content.video_url || String(meta.source_url || meta.source || '')
+  const mediaAvailable = Boolean(evidenceId && asset.status === 'stored')
+  const mediaSrc = mediaAvailable ? `/api/v1/evidence/${encodeURIComponent(evidenceId || '')}/media` : ''
+  const remoteVideoSrc = /^https?:\/\//.test(videoUrl) ? videoUrl : ''
+  const playerSrc = mediaSrc || remoteVideoSrc
+  const frameText = (frameId: string) => [
+    ...(current.evidence.ocr_results || []).filter((item) => item.frame_id === frameId).map((item) => item.text),
+    ...(current.evidence.object_detections || []).filter((item) => item.frame_id === frameId).map((item) => item.label),
+  ].filter(Boolean)
 
   return (
-    <Card title="视频证据">
-      <div className="evidence-list">
-        <div className="evidence-item">
+    <div className="review-media-panel">
+      <div className="review-media-header">
+        <div>
+          <Typography.Title heading={6}>视频证据</Typography.Title>
           <div className="status-line">
-            <StatusTag kind="source" value={meta.asset_status === 'stored' ? 'available' : 'fallback'} />
-            <Tag color="gray">{String(meta.source_type || 'text_only')}</Tag>
-          </div>
-          <div className="breakable" style={{ marginTop: 6 }}>
-            {videoUrl ? <Typography.Text copyable={{ text: videoUrl }}>{videoUrl}</Typography.Text> : '—'}
-          </div>
-          <div className="status-line" style={{ marginTop: 8 }}>
+            <StatusTag kind="source" value={mediaAvailable || remoteVideoSrc ? 'available' : 'fallback'} />
+            <Tag color="gray">{String(meta.source_type || asset.source_type || 'text_only')}</Tag>
             {meta.duration_ms != null && <Tag color="arcoblue">{Math.round(Number(meta.duration_ms) / 1000)}s</Tag>}
             {meta.width != null && meta.height != null && <Tag color="arcoblue">{String(meta.width)}x{String(meta.height)}</Tag>}
             {meta.file_size_bytes != null && <Tag color="gray">{Math.round(Number(meta.file_size_bytes) / 1024)} KB</Tag>}
           </div>
         </div>
-        <div className="frame-grid">
-          {frames.slice(0, 3).map((frame) => {
-            const canLoad = Boolean(evidenceId && frame.thumbnail_path)
-            const src = `/api/v1/evidence/${evidenceId}/frames/${encodeURIComponent(frame.frame_id)}`
-            return (
-              <div className="frame-card" key={frame.frame_id}>
-                {canLoad ? <img className="frame-thumb" src={src} alt={frame.caption || frame.frame_id} /> : <div className="frame-thumb frame-placeholder">{frame.frame_id}</div>}
-                <div className="frame-caption">
-                  <span className="num-cell">{Math.round(Number(frame.timestamp_ms || 0) / 1000)}s</span>
-                  <span>{frame.caption || '关键帧证据'}</span>
-                </div>
-              </div>
-            )
-          })}
-          {!frames.length && <div className="evidence-item">暂无关键帧，当前使用标题、简介、ASR/OCR 降级证据。</div>}
-        </div>
+        {playerSrc && (
+          <Button size="small" type="outline" href={playerSrc} target="_blank">
+            打开原视频
+          </Button>
+        )}
       </div>
-    </Card>
+
+      <div className="review-video-shell">
+        {playerSrc ? (
+          <video className="review-video-player" src={playerSrc} controls preload="metadata" />
+        ) : (
+          <div className="review-video-empty">
+            <StatusTag kind="source" value="fallback" />
+            <span>当前没有可直接播放的视频文件，系统正在使用文本、ASR/OCR 和关键帧证据。</span>
+          </div>
+        )}
+      </div>
+
+      <div className="review-media-source breakable">
+        {videoUrl ? <Typography.Text copyable={{ text: videoUrl }}>{videoUrl}</Typography.Text> : '—'}
+      </div>
+
+      <div className="frame-filmstrip" aria-label="关键帧证据">
+        {frames.map((frame) => {
+          const canLoad = Boolean(evidenceId && frame.thumbnail_path)
+          const src = evidenceFrameSrc(evidenceId, frame.frame_id)
+          const hits = frameText(frame.frame_id)
+          return (
+            <button className="review-frame-card" key={frame.frame_id} type="button" onClick={() => canLoad && setPreviewFrame(frame)}>
+              {canLoad ? <img className="review-frame-thumb" src={src} alt={frame.caption || frame.frame_id} /> : <div className="review-frame-thumb frame-placeholder">{frame.frame_id}</div>}
+              <div className="review-frame-caption">
+                <span className="num-cell">{Math.round(Number(frame.timestamp_ms || 0) / 1000)}s</span>
+                <span>{frame.caption || '关键帧证据'}</span>
+              </div>
+              {!!hits.length && (
+                <div className="review-frame-hits">
+                  {hits.slice(0, 3).map((hit, index) => <Tag key={`${hit}-${index}`} color="orange">{hit}</Tag>)}
+                </div>
+              )}
+            </button>
+          )
+        })}
+        {!frames.length && <div className="evidence-item">暂无关键帧，当前使用标题、简介、ASR/OCR 降级证据。</div>}
+      </div>
+
+      <Modal
+        className="frame-preview-modal"
+        title={previewFrame ? `关键帧 ${Math.round(Number(previewFrame.timestamp_ms || 0) / 1000)}s` : '关键帧'}
+        visible={Boolean(previewFrame)}
+        footer={null}
+        onCancel={() => setPreviewFrame(null)}
+      >
+        {previewFrame && (
+          <div className="frame-preview">
+            <img src={evidenceFrameSrc(evidenceId, previewFrame.frame_id)} alt={previewFrame.caption || previewFrame.frame_id} />
+            <Typography.Paragraph type="secondary">{previewFrame.caption || '关键帧证据'}</Typography.Paragraph>
+          </div>
+        )}
+      </Modal>
+    </div>
   )
 }
 
@@ -378,7 +433,7 @@ export function ReviewWorkbench() {
         </Card>
       )}
 
-      <div className="workbench-grid">
+      <div className={`workbench-grid ${current ? 'workbench-grid-active' : ''}`}>
         <Card title={`待审队列 (${queue.data?.length ?? 0})`}>
           <Table<ReviewTask>
             size="small"
@@ -436,6 +491,7 @@ export function ReviewWorkbench() {
               title={<Space>案件决策 <Tag color="arcoblue">{current.task.task_id}</Tag>{current.task.is_sensitive && <Tag color="red">敏感</Tag>}</Space>}
               extra={<SLACountdown deadline={current.task.sla_deadline} />}
             >
+              <VideoEvidence current={current} />
               <div className="case-grid">
                 <div className="page-stack">
                   <Card title="内容摘要">
@@ -468,7 +524,6 @@ export function ReviewWorkbench() {
                       </Tooltip>
                     </div>
                   </Card>
-                  <VideoEvidence current={current} />
                   <ModalityPanel evidence={current.evidence} />
                   <EvidenceTags evidence={current.evidence} />
                   <Card title="裁定">

@@ -56,7 +56,8 @@ VALID_STATUS_TRANSITIONS: dict[str, set[str]] = {
     DimensionStatus.DRAFT.value: {DimensionStatus.SHADOW.value},
     DimensionStatus.SHADOW.value: {DimensionStatus.ACTIVE.value, DimensionStatus.DRAFT.value},
     DimensionStatus.ACTIVE.value: {DimensionStatus.ARCHIVED.value, DimensionStatus.SHADOW.value},
-    DimensionStatus.ARCHIVED.value: set(),  # 终态
+    # 停用后允许恢复到草稿重新编辑，再走试运行/审批/上线，避免绕过治理流程直接复活。
+    DimensionStatus.ARCHIVED.value: {DimensionStatus.DRAFT.value},
 }
 
 

@@ -185,6 +185,9 @@ class MvpFlowTest(unittest.TestCase):
             self.assertEqual(meta["file_size_bytes"], video.stat().st_size)
             self.assertEqual(len(meta["sha256"]), 64)
             self.assertEqual(evidence["media_asset"]["status"], "stored")
+            media = service.get_evidence_media(machine_detail["evidence_package_id"])
+            self.assertTrue(Path(media["path"]).is_file())
+            self.assertEqual(Path(media["path"]).stat().st_size, video.stat().st_size)
             self.assertEqual(evidence["modality_availability"]["video_source"]["mode"], "stored_asset")
             self.assertEqual(
                 [item["status"] for item in evidence["modality_model_invocations"]],

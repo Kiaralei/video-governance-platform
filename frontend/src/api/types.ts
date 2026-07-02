@@ -127,6 +127,8 @@ export interface Dimension {
   version: number
   auto_block_threshold: number
   human_review_threshold: number
+  prompt_template_id: string
+  sor_template_id: string
   approved_by: string | null
   has_strategy_class: boolean
 }
@@ -145,6 +147,12 @@ export interface Appeal {
 
 export interface QualitySummary {
   flywheel_by_source: Record<string, number>
+  flywheel_sources?: Array<{
+    source_type: string
+    source_label: string
+    source_description: string
+    count: number
+  }>
   total_samples: number
   passed_quality_gate: number
   golden: { total: number; correct: number; accuracy: number | null }

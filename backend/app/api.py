@@ -261,6 +261,12 @@ def evidence(request: Request, evidence_id: str) -> dict[str, Any]:
     return _service(request).get_evidence(evidence_id)
 
 
+@evidence_router.get("/evidence/{evidence_id}/media")
+def evidence_media(request: Request, evidence_id: str) -> FileResponse:
+    media = _service(request).get_evidence_media(evidence_id)
+    return FileResponse(media["path"], media_type=media["media_type"])
+
+
 @evidence_router.get("/evidence/{evidence_id}/frames/{frame_id}")
 def evidence_frame(request: Request, evidence_id: str, frame_id: str) -> FileResponse:
     frame = _service(request).get_evidence_frame(evidence_id, frame_id)
@@ -457,7 +463,7 @@ def update_dimension(
     payload: UpdateDimensionRequest,
     user: Principal = Depends(require_permission("policy.write")),
 ) -> dict[str, Any]:
-    return _service(request).update_dimension(dimension_id, payload.model_dump(), user.user_id)
+    return _service(request).update_dimension(dimension_id, payload.model_dump(exclude_none=True), user.user_id)
 
 
 @policy_router.post("/dimensions/{dimension_id}/approve")
