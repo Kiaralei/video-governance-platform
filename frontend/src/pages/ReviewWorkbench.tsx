@@ -16,10 +16,13 @@ import { IconCheckCircle, IconRightCircle, IconStop } from '@arco-design/web-rea
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { CaseDetail, DimensionVerdict, EvidencePackage, ModalityInvocation, ReviewTask } from '../api/types'
+import { useAuth } from '../auth/AuthContext'
 import { EmptyActionButton, EmptyState } from '../components/EmptyState'
 import { PageHeader } from '../components/PageHeader'
 import { SLACountdown } from '../components/SLACountdown'
 import { StatusTag, statusMeta } from '../components/StatusTag'
+
+const CURRENT_REVIEW_TASK_PREFIX = 'vgp_current_review_task_id'
 
 function VerdictTable({ verdicts }: { verdicts: DimensionVerdict[] }) {
   return (
@@ -136,23 +139,116 @@ function TextEvidence({ evidence }: { evidence: EvidencePackage }) {
   )
 }
 
+function showValue(value?: string | null) {
+  return value && value.trim() ? value : '—'
+}
+
+function BusinessContextCard({ current }: { current: CaseDetail }) {
+  const context = current.content.business_context || {}
+  const poi = context.poi || {}
+  const product = context.product || {}
+  const cart = context.shopping_cart || {}
+  const merchant = context.merchant || {}
+  const cartUrl = current.content.shopping_cart_url || cart.url || ''
+
+  return (
+    <Card title="挂载信息">
+      <div className="kv-grid">
+        <div className="label">POI</div><div>{showValue(poi.name || current.content.poi)}</div>
+        <div className="label">POI 类目</div><div>{showValue(poi.category)}</div>
+        <div className="label">商品</div><div>{showValue(current.content.product_title || product.title)}</div>
+        <div className="label">商品类目</div><div>{showValue(current.content.product_category || product.category)}</div>
+        <div className="label">商家</div><div>{showValue(current.content.merchant_name || merchant.name)}</div>
+        <div className="label">购物车</div>
+        <div className="breakable">
+          {cartUrl ? <Typography.Text copyable={{ text: cartUrl }}>{cartUrl}</Typography.Text> : '—'}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function VideoEvidence({ current }: { current: CaseDetail }) {
+  const evidenceId = current.task.evidence_package_id || current.evidence.ep_id
+  const frames = current.evidence.frames || []
+  const meta = current.evidence.video_meta || {}
+  const videoUrl = current.content.video_url || String(meta.source_url || meta.source || '')
+
+  return (
+    <Card title="视频证据">
+      <div className="evidence-list">
+        <div className="evidence-item">
+          <div className="status-line">
+            <StatusTag kind="source" value={meta.asset_status === 'stored' ? 'available' : 'fallback'} />
+            <Tag color="gray">{String(meta.source_type || 'text_only')}</Tag>
+          </div>
+          <div className="breakable" style={{ marginTop: 6 }}>
+            {videoUrl ? <Typography.Text copyable={{ text: videoUrl }}>{videoUrl}</Typography.Text> : '—'}
+          </div>
+          <div className="status-line" style={{ marginTop: 8 }}>
+            {meta.duration_ms != null && <Tag color="arcoblue">{Math.round(Number(meta.duration_ms) / 1000)}s</Tag>}
+            {meta.width != null && meta.height != null && <Tag color="arcoblue">{String(meta.width)}x{String(meta.height)}</Tag>}
+            {meta.file_size_bytes != null && <Tag color="gray">{Math.round(Number(meta.file_size_bytes) / 1024)} KB</Tag>}
+          </div>
+        </div>
+        <div className="frame-grid">
+          {frames.slice(0, 3).map((frame) => {
+            const canLoad = Boolean(evidenceId && frame.thumbnail_path)
+            const src = `/api/v1/evidence/${evidenceId}/frames/${encodeURIComponent(frame.frame_id)}`
+            return (
+              <div className="frame-card" key={frame.frame_id}>
+                {canLoad ? <img className="frame-thumb" src={src} alt={frame.caption || frame.frame_id} /> : <div className="frame-thumb frame-placeholder">{frame.frame_id}</div>}
+                <div className="frame-caption">
+                  <span className="num-cell">{Math.round(Number(frame.timestamp_ms || 0) / 1000)}s</span>
+                  <span>{frame.caption || '关键帧证据'}</span>
+                </div>
+              </div>
+            )
+          })}
+          {!frames.length && <div className="evidence-item">暂无关键帧，当前使用标题、简介、ASR/OCR 降级证据。</div>}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 export function ReviewWorkbench() {
   const qc = useQueryClient()
+  const { hasRole, roles } = useAuth()
+  const canReview = hasRole('reviewer')
   const [current, setCurrent] = useState<CaseDetail | null>(null)
   const [reason, setReason] = useState('')
   const [reasonTouched, setReasonTouched] = useState(false)
+  const currentTaskStorageKey = `${CURRENT_REVIEW_TASK_PREFIX}:${roles.slice().sort().join('|') || 'anonymous'}`
+
+  const rememberCurrent = useCallback(
+    (data: CaseDetail) => {
+      setCurrent(data)
+      localStorage.setItem(currentTaskStorageKey, data.task.task_id)
+    },
+    [currentTaskStorageKey],
+  )
+
+  const clearCurrent = useCallback(() => {
+    setCurrent(null)
+    localStorage.removeItem(currentTaskStorageKey)
+  }, [currentTaskStorageKey])
 
   const queue = useQuery<ReviewTask[]>({
     queryKey: ['queue'],
     queryFn: async () => (await api.get('/review/human/queue')).data.items,
+    enabled: canReview,
     refetchInterval: 15000,
   })
 
   const fetchNext = useMutation({
-    mutationFn: async () => (await api.post('/review/human/next')).data,
+    mutationFn: async () => {
+      if (!canReview) throw new Error('当前账号没有人审领取权限，请切换到 reviewer_demo')
+      return (await api.post('/review/human/next')).data
+    },
     onSuccess: (data) => {
       if (data.status === 'assigned') {
-        setCurrent(data as CaseDetail)
+        rememberCurrent(data as CaseDetail)
         setReason('')
         setReasonTouched(false)
       } else if (data.status === 'break_required') {
@@ -162,12 +258,12 @@ export function ReviewWorkbench() {
       }
       qc.invalidateQueries({ queryKey: ['queue'] })
     },
-    onError: () => Message.error('领取失败'),
+    onError: (e: unknown) => Message.error(`领取失败：${extractErr(e)}`),
   })
 
   const openCase = useMutation({
     mutationFn: async (taskId: string) => (await api.post(`/review/human/${taskId}/claim`)).data,
-    onSuccess: (data) => { setCurrent(data as CaseDetail); setReason(''); setReasonTouched(false) },
+    onSuccess: (data) => { rememberCurrent(data as CaseDetail); setReason(''); setReasonTouched(false) },
     onError: (e: unknown) => Message.error(`领取失败：${extractErr(e)}`),
   })
 
@@ -181,7 +277,7 @@ export function ReviewWorkbench() {
       } else {
         Message.success(`已裁定：${data.decision}`)
       }
-      setCurrent(null)
+      clearCurrent()
       setReason('')
       setReasonTouched(false)
       qc.invalidateQueries({ queryKey: ['queue'] })
@@ -199,14 +295,62 @@ export function ReviewWorkbench() {
   )
 
   useEffect(() => {
+    if (!canReview) {
+      clearCurrent()
+      return
+    }
+    if (current) return
+
+    let cancelled = false
+    async function restoreCurrent() {
+      const savedTaskId = localStorage.getItem(currentTaskStorageKey)
+      try {
+        const { data } = savedTaskId
+          ? await api.get(`/review/human/${savedTaskId}`)
+          : await api.get('/review/human/current')
+        if (cancelled) return
+        if (data.status === 'empty') {
+          localStorage.removeItem(currentTaskStorageKey)
+          return
+        }
+        const detail = data as CaseDetail
+        if (detail.task.status === 'decided') {
+          localStorage.removeItem(currentTaskStorageKey)
+          return
+        }
+        setCurrent(detail)
+        localStorage.setItem(currentTaskStorageKey, detail.task.task_id)
+        setReason('')
+        setReasonTouched(false)
+      } catch {
+        localStorage.removeItem(currentTaskStorageKey)
+        if (!savedTaskId || cancelled) return
+        try {
+          const { data } = await api.get('/review/human/current')
+          if (cancelled || data.status === 'empty') return
+          const detail = data as CaseDetail
+          setCurrent(detail)
+          localStorage.setItem(currentTaskStorageKey, detail.task.task_id)
+          setReason('')
+          setReasonTouched(false)
+        } catch {
+          // Ignore restore failures; the reviewer can claim the next task manually.
+        }
+      }
+    }
+    restoreCurrent()
+    return () => { cancelled = true }
+  }, [canReview, clearCurrent, current, currentTaskStorageKey])
+
+  useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
-      if (e.key.toLowerCase() === 'n') fetchNext.mutate()
+      if (canReview && e.key.toLowerCase() === 'n') fetchNext.mutate()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [submitDecision, fetchNext])
+  }, [canReview, submitDecision, fetchNext])
 
   const pendingQueue = queue.data || []
   const highestPriority = pendingQueue.length ? Math.min(...pendingQueue.map((item) => Number(item.priority || 99))) : '—'
@@ -219,11 +363,20 @@ export function ReviewWorkbench() {
         description="只处理机器审核无法确定的案件。审核员基于证据独立裁定，通过与拦截都会进入审计链路。"
         meta={<Space wrap><Tag color="orange">快捷键 N 领取</Tag><Tag color="arcoblue">裁定需二次确认</Tag></Space>}
         actions={
-        <Button type="primary" icon={<IconRightCircle />} onClick={() => fetchNext.mutate()} loading={fetchNext.isPending}>
+        <Button type="primary" icon={<IconRightCircle />} onClick={() => fetchNext.mutate()} loading={fetchNext.isPending} disabled={!canReview}>
           领取下一个
         </Button>
         }
       />
+
+      {!canReview && (
+        <Card>
+          <EmptyState
+            title="当前账号没有人审领取权限"
+            description="机审监控可以被策略管理员和系统管理员查看；领取人审任务需要审核员角色。演示时请切换到 reviewer_demo。"
+          />
+        </Card>
+      )}
 
       <div className="workbench-grid">
         <Card title={`待审队列 (${queue.data?.length ?? 0})`}>
@@ -272,7 +425,7 @@ export function ReviewWorkbench() {
                 <div className="metric-chip"><Typography.Text type="secondary">最高优先级</Typography.Text><div className="num-cell">{highestPriority}</div></div>
                 <div className="metric-chip"><Typography.Text type="secondary">当前状态</Typography.Text><div>空闲</div></div>
               </div>
-              <Button type="primary" icon={<IconRightCircle />} onClick={() => fetchNext.mutate()} loading={fetchNext.isPending}>
+              <Button type="primary" icon={<IconRightCircle />} onClick={() => fetchNext.mutate()} loading={fetchNext.isPending} disabled={!canReview}>
                 领取下一单
               </Button>
             </div>
@@ -297,6 +450,7 @@ export function ReviewWorkbench() {
                   <Card title="机审维度">
                     <VerdictTable verdicts={current.machine_review.verdicts} />
                   </Card>
+                  <BusinessContextCard current={current} />
                   <TextEvidence evidence={current.evidence} />
                 </div>
                 <div className="page-stack">
@@ -314,6 +468,7 @@ export function ReviewWorkbench() {
                       </Tooltip>
                     </div>
                   </Card>
+                  <VideoEvidence current={current} />
                   <ModalityPanel evidence={current.evidence} />
                   <EvidenceTags evidence={current.evidence} />
                   <Card title="裁定">
@@ -356,6 +511,8 @@ export function ReviewWorkbench() {
 }
 
 function extractErr(e: unknown): string {
-  const err = e as { response?: { data?: { error?: string } } }
+  if (e instanceof Error) return e.message
+  const err = e as { response?: { data?: { error?: string; detail?: string } } }
+  if (err.response?.data?.detail) return err.response.data.detail
   return err.response?.data?.error || '请求失败'
 }

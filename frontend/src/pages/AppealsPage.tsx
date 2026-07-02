@@ -11,7 +11,7 @@ import { StatusTag } from '../components/StatusTag'
 export function AppealsPage() {
   const qc = useQueryClient()
   const { hasRole } = useAuth()
-  const canDecide = hasRole('appeal_reviewer', 'reviewer_t3')
+  const canDecide = hasRole('reviewer')
   const [decideTarget, setDecideTarget] = useState<Appeal | null>(null)
   const [reason, setReason] = useState('')
   const [reasonTouched, setReasonTouched] = useState(false)

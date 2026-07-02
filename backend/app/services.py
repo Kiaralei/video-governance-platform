@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from .appeals import (
@@ -80,6 +80,155 @@ def loads(data: str) -> Any:
     return json.loads(data)
 
 
+_CONTENT_PAYLOAD_KEYS = {
+    "title",
+    "description",
+    "creator_id",
+    "poi",
+    "video_url",
+    "business_context",
+    "attached_data",
+    "context",
+    "shopping_cart",
+    "shopping_cart_url",
+    "product",
+    "products",
+    "product_title",
+    "product_category",
+    "merchant",
+    "merchant_id",
+    "merchant_name",
+    "landing_page_domain",
+}
+
+
+def _as_str(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _compact_dict(data: dict[str, Any]) -> dict[str, Any]:
+    return {k: v for k, v in data.items() if v not in ("", None, [], {})}
+
+
+def _safe_load_object(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if not raw:
+        return {}
+    try:
+        parsed = loads(str(raw))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _business_context_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize extensible metadata used by content-information matching."""
+    merged: dict[str, Any] = {}
+    for key in ("business_context", "attached_data", "context"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            merged.update(value)
+
+    poi_raw = merged.get("poi", payload.get("poi", "global"))
+    poi_obj = poi_raw if isinstance(poi_raw, dict) else {"name": poi_raw}
+    shopping_raw = (
+        merged.get("shopping_cart")
+        or payload.get("shopping_cart")
+        or merged.get("cart")
+        or {}
+    )
+    shopping_obj = shopping_raw if isinstance(shopping_raw, dict) else {"url": shopping_raw}
+    product_raw = merged.get("product") or payload.get("product") or {}
+    product_obj = product_raw if isinstance(product_raw, dict) else {"title": product_raw}
+    merchant_raw = merged.get("merchant") or payload.get("merchant") or {}
+    merchant_obj = merchant_raw if isinstance(merchant_raw, dict) else {"name": merchant_raw}
+
+    extra_context = payload.get("extra_context") if isinstance(payload.get("extra_context"), dict) else {}
+    passthrough = {
+        key: value
+        for key, value in payload.items()
+        if key not in _CONTENT_PAYLOAD_KEYS and value not in ("", None, [], {})
+    }
+
+    return {
+        "poi": _compact_dict(
+            {
+                "id": _as_str(poi_obj.get("id") or merged.get("poi_id") or payload.get("poi_id")),
+                "name": _as_str(poi_obj.get("name") or poi_obj.get("poi_name") or payload.get("poi") or "global"),
+                "category": _as_str(
+                    poi_obj.get("category") or merged.get("poi_category") or payload.get("poi_category")
+                ),
+                "city": _as_str(poi_obj.get("city") or merged.get("city") or payload.get("city")),
+                "geo": poi_obj.get("geo") or merged.get("geo") or payload.get("geo"),
+            }
+        ),
+        "shopping_cart": _compact_dict(
+            {
+                "url": _as_str(
+                    shopping_obj.get("url")
+                    or shopping_obj.get("link")
+                    or payload.get("shopping_cart_url")
+                    or merged.get("shopping_cart_url")
+                ),
+                "landing_page_domain": _as_str(
+                    shopping_obj.get("landing_page_domain")
+                    or payload.get("landing_page_domain")
+                    or merged.get("landing_page_domain")
+                ),
+            }
+        ),
+        "product": _compact_dict(
+            {
+                "title": _as_str(
+                    product_obj.get("title")
+                    or product_obj.get("name")
+                    or payload.get("product_title")
+                    or merged.get("product_title")
+                ),
+                "category": _as_str(
+                    product_obj.get("category")
+                    or payload.get("product_category")
+                    or merged.get("product_category")
+                ),
+                "sku_id": _as_str(product_obj.get("sku_id") or product_obj.get("id") or payload.get("sku_id")),
+            }
+        ),
+        "products": merged.get("products") or payload.get("products") or [],
+        "merchant": _compact_dict(
+            {
+                "id": _as_str(merchant_obj.get("id") or payload.get("merchant_id") or merged.get("merchant_id")),
+                "name": _as_str(
+                    merchant_obj.get("name") or payload.get("merchant_name") or merged.get("merchant_name")
+                ),
+            }
+        ),
+        "extra": _compact_dict({**extra_context, **passthrough}),
+    }
+
+
+def _context_metadata(context: dict[str, Any]) -> dict[str, Any]:
+    poi = context.get("poi") if isinstance(context.get("poi"), dict) else {}
+    cart = context.get("shopping_cart") if isinstance(context.get("shopping_cart"), dict) else {}
+    product = context.get("product") if isinstance(context.get("product"), dict) else {}
+    merchant = context.get("merchant") if isinstance(context.get("merchant"), dict) else {}
+    return _compact_dict(
+        {
+            "poi": poi.get("name"),
+            "poi_name": poi.get("name"),
+            "poi_category": poi.get("category"),
+            "poi_city": poi.get("city"),
+            "shopping_cart_url": cart.get("url"),
+            "landing_page_domain": cart.get("landing_page_domain"),
+            "product_title": product.get("title"),
+            "product_category": product.get("category"),
+            "merchant_name": merchant.get("name"),
+        }
+    )
+
+
 class ValidationError(ValueError):
     pass
 
@@ -147,6 +296,7 @@ class GovernanceService:
 
     def seed_demo_cases(self) -> dict[str, Any]:
         """Create a stable demo batch that exercises the production routing paths."""
+        cleared = self._clear_demo_cases()
         batch_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         examples = [
             {
@@ -159,15 +309,6 @@ class GovernanceService:
                 "video_url": "https://example.local/videos/demo-critical-gambling.mp4",
             },
             {
-                "scenario": "gambling_auto_block",
-                "expected_policy_decision": "auto_block",
-                "title": f"DEMO gambling auto block {batch_id}",
-                "description": "Casino betting lottery wager odds casino betting lottery odds.",
-                "creator_id": "demo_creator_gambling",
-                "poi": "global",
-                "video_url": "https://example.local/videos/demo-gambling-auto-block.mp4",
-            },
-            {
                 "scenario": "drug_violence_auto_block",
                 "expected_policy_decision": "auto_block",
                 "title": f"DEMO drug violence auto block {batch_id}",
@@ -177,13 +318,26 @@ class GovernanceService:
                 "video_url": "https://example.local/videos/demo-drug-violence-auto-block.mp4",
             },
             {
-                "scenario": "marketing_needs_human_review",
-                "expected_policy_decision": "needs_human_review",
-                "title": f"DEMO marketing needs human review {batch_id}",
-                "description": "Creator mentions discount coupon for handmade stickers in a lifestyle vlog.",
-                "creator_id": "demo_creator_marketing",
+                "scenario": "marketing_auto_block",
+                "expected_policy_decision": "auto_block",
+                "title": f"DEMO hard sell auto block {batch_id}",
+                "description": "Limited offer coupon discount buy now coupon discount scan QR promotion.",
+                "creator_id": "demo_creator_marketing_block",
                 "poi": "global",
-                "video_url": "https://example.local/videos/demo-marketing-review.mp4",
+                "video_url": "https://example.local/videos/demo-hard-sell-auto-block.mp4",
+            },
+            {
+                "scenario": "context_mismatch_needs_human_review",
+                "expected_policy_decision": "needs_human_review",
+                "title": f"DEMO park vlog with mismatched cart {batch_id}",
+                "description": "A quiet park walk with trees, lake view, family picnic and skyline shots.",
+                "creator_id": "demo_creator_context",
+                "poi": "Shanghai Luxury Sushi Bar",
+                "product_title": "Premium sushi platter",
+                "product_category": "restaurant food",
+                "shopping_cart_url": "https://shop.example.local/cart/premium-sushi-platter",
+                "merchant_name": "Shanghai Luxury Sushi Bar",
+                "video_url": "https://example.local/videos/demo-park-vlog-context-review.mp4",
             },
             {
                 "scenario": "cooking_auto_pass",
@@ -219,7 +373,7 @@ class GovernanceService:
                     "triggered_rules": review["decision_summary"].get("triggered_rules", []),
                 }
             )
-        return {"batch_id": batch_id, "total": len(created), "items": created}
+        return {"batch_id": batch_id, "cleared": cleared, "total": len(created), "items": created}
 
     def _run_pipeline_for_demo(self, job_id: str, content_id: str) -> None:
         try:
@@ -230,6 +384,33 @@ class GovernanceService:
             self._mark_pipeline_failed(job_id, content_id, exc)
             raise
 
+    def _clear_demo_cases(self) -> int:
+        with self._session_factory.begin() as session:
+            content_ids = session.execute(
+                select(ContentItem.id).where(
+                    or_(
+                        ContentItem.creator_id.like("demo_creator_%"),
+                        ContentItem.title.like("DEMO %"),
+                    )
+                )
+            ).scalars().all()
+            if not content_ids:
+                return 0
+            for model in (
+                DeadLetterTask,
+                AuditLog,
+                FlywheelSample,
+                AppealCase,
+                HumanReviewTask,
+                MachineReview,
+                EvidencePackage,
+                MediaAsset,
+                PipelineJob,
+            ):
+                session.execute(delete(model).where(model.content_id.in_(content_ids)))
+            session.execute(delete(ContentItem).where(ContentItem.id.in_(content_ids)))
+        return len(content_ids)
+
     def ingest_content(self, payload: dict[str, Any]) -> dict[str, Any]:
         title = str(payload.get("title", "")).strip()
         description = str(payload.get("description", "")).strip()
@@ -238,6 +419,9 @@ class GovernanceService:
             raise ValidationError("标题不能为空")
         if not description:
             raise ValidationError("描述不能为空")
+
+        business_context = _business_context_from_payload(payload)
+        poi_name = _context_metadata(business_context).get("poi") or "global"
 
         content_id = new_id("cnt")
         job_id = new_id("job")
@@ -260,8 +444,9 @@ class GovernanceService:
                     title=title,
                     description=description,
                     creator_id=creator_id,
-                    poi=payload.get("poi", "global"),
+                    poi=poi_name,
                     video_url=payload.get("video_url", ""),
+                    business_context_json=dumps(business_context),
                     status="machine_queued",
                     final_decision=None,
                     created_at=timestamp,
@@ -518,6 +703,7 @@ class GovernanceService:
                 creator_id=content.creator_id,
                 poi=str(content.poi or "global"),
                 video_url=str(content.video_url or ""),
+                business_context=_safe_load_object(content.business_context_json),
                 text=text_blob,
             )
             job.stage = "machine_review"
@@ -559,8 +745,13 @@ class GovernanceService:
             if existing_review is not None:
                 return
             evidence_row = session.execute(
-                select(EvidencePackage).where(EvidencePackage.content_id == job.content_id)
-            ).scalar_one()
+                select(EvidencePackage)
+                .where(EvidencePackage.content_id == job.content_id)
+                .order_by(EvidencePackage.created_at.desc(), EvidencePackage.id.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if evidence_row is None:
+                raise NotFoundError("璇佹嵁鍖呬笉瀛樺湪")
             evidence = loads(evidence_row.package_json)
             text_blob = f"{content.title} {content.description}".lower()
             machine_review_id = new_id("mr")
@@ -720,6 +911,7 @@ class GovernanceService:
                 text(
                     """
                     SELECT t.*, c.title, c.description, c.creator_id, c.poi, c.video_url,
+                           c.business_context_json,
                            m.recommendation, m.confidence, m.rationale
                     FROM human_review_tasks t
                     JOIN content_items c ON c.id = t.content_id
@@ -738,6 +930,21 @@ class GovernanceService:
         next_offset = offset + limit if offset + limit < total else None
         return {"items": items, "total": total, "offset": offset, "limit": limit, "next_offset": next_offset}
 
+    def current_case(self, reviewer_id: str) -> dict[str, Any]:
+        self.sweep_locks_and_sla()
+        with self._session_factory() as session:
+            task_id = session.execute(
+                select(HumanReviewTask.id)
+                .where(
+                    HumanReviewTask.assigned_to == reviewer_id,
+                    HumanReviewTask.status == ReviewStatus.IN_REVIEW.value,
+                )
+                .order_by(HumanReviewTask.updated_at.desc(), HumanReviewTask.created_at.desc())
+            ).scalar_one_or_none()
+        if task_id is None:
+            return {"status": "empty"}
+        return {"status": "assigned", **self.get_case(task_id)}
+
     def list_machine_reviews(self, offset: int = 0, limit: int = 50) -> dict[str, Any]:
         offset = max(0, offset)
         limit = min(max(1, limit), 100)
@@ -747,6 +954,7 @@ class GovernanceService:
                 text(
                     """
                     SELECT m.*, c.title, c.description, c.creator_id, c.status, c.final_decision,
+                           c.business_context_json,
                            e.id AS evidence_package_id, t.id AS task_id, t.status AS task_status
                     FROM machine_reviews m
                     JOIN content_items c ON c.id = m.content_id
@@ -768,6 +976,7 @@ class GovernanceService:
                 text(
                     """
                     SELECT m.*, c.title, c.description, c.creator_id, c.status, c.final_decision,
+                           c.business_context_json,
                            e.id AS evidence_package_id, e.package_json,
                            t.id AS task_id, t.status AS task_status
                     FROM machine_reviews m
@@ -791,6 +1000,7 @@ class GovernanceService:
                 text(
                     """
                     SELECT t.*, c.title, c.description, c.creator_id, c.poi, c.video_url,
+                           c.business_context_json,
                            c.tenant_id, c.jurisdiction, c.final_decision,
                            e.package_json,
                            m.recommendation, m.confidence, m.rationale, m.verdicts_json
@@ -806,6 +1016,8 @@ class GovernanceService:
         if row is None:
             raise NotFoundError("任务不存在")
         data = dict(row)
+        business_context = _safe_load_object(data.get("business_context_json"))
+        context_fields = _context_metadata(business_context)
         return {
             "task": self._task_summary(data),
             "content": {
@@ -815,6 +1027,11 @@ class GovernanceService:
                 "creator_id": data["creator_id"],
                 "poi": data["poi"],
                 "video_url": data["video_url"],
+                "business_context": business_context,
+                "shopping_cart_url": context_fields.get("shopping_cart_url", ""),
+                "product_title": context_fields.get("product_title", ""),
+                "product_category": context_fields.get("product_category", ""),
+                "merchant_name": context_fields.get("merchant_name", ""),
                 "tenant_id": data["tenant_id"],
                 "jurisdiction": data["jurisdiction"],
                 "final_decision": data["final_decision"],
@@ -834,6 +1051,24 @@ class GovernanceService:
         if package is None:
             raise NotFoundError("证据包不存在")
         return loads(package.package_json)
+
+    def get_evidence_frame(self, evidence_id: str, frame_id: str) -> dict[str, Any]:
+        evidence = self.get_evidence(evidence_id)
+        frame = next((item for item in evidence.get("frames", []) if item.get("frame_id") == frame_id), None)
+        if frame is None:
+            raise NotFoundError("evidence frame not found")
+        thumbnail = str(frame.get("thumbnail_path") or "").strip()
+        if not thumbnail:
+            raise NotFoundError("evidence frame has no thumbnail")
+        path = Path(thumbnail).resolve()
+        root = settings.evidence_dir.resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise NotFoundError("invalid evidence frame path") from exc
+        if not path.is_file():
+            raise NotFoundError("evidence frame file not found")
+        return {"path": str(path), "media_type": "image/jpeg"}
 
     def claim_task(self, task_id: str, reviewer_id: str) -> dict[str, Any]:
         """领取即加案件锁（Stage 5）。锁未过期时他人不能抢；本人可幂等续租；锁过期可接管。"""
@@ -948,7 +1183,7 @@ class GovernanceService:
             payload = {"task_id": task_id, "sla_deadline": deadline}
             if holder:
                 hub.publish_to_user(holder, "sla_warning", payload)
-            hub.publish_to_role("senior_reviewer", "sla_warning", payload)
+            hub.publish_to_role("reviewer", "sla_warning", payload)
         return {"expired_locks": len(expired), "sla_warnings": len(warnings)}
 
     # --- Stage 6：优先级队列 + 分配 + 反疲劳 + 独立性 -------------------------
@@ -1168,7 +1403,7 @@ class GovernanceService:
                 policy_version, rule_version, timestamp,
             )
         hub.publish_to_role(
-            "senior_reviewer",
+            "reviewer",
             "task_decided",
             {"task_id": task_id, "content_id": content_id, "decision": decision},
         )
@@ -1508,7 +1743,7 @@ class GovernanceService:
                 )
         # 恢复连锁事件广播（异步最终一致的占位：这里直接推 WS）。
         if outcome == "overturn":
-            hub.publish_to_role("compliance_auditor", "appeal_overturned", {"appeal_id": appeal_id, "content_id": content_id})
+            hub.publish_to_role("system_admin", "appeal_overturned", {"appeal_id": appeal_id, "content_id": content_id})
         return {"appeal_id": appeal_id, "status": target_status, "outcome": outcome, "recovery_chain": recovery}
 
     def _appeal_summary(self, appeal: AppealCase) -> dict[str, Any]:
@@ -1575,6 +1810,16 @@ class GovernanceService:
                             updated_at=timestamp,
                         )
                     )
+            else:
+                defaults = {spec["dimension_id"]: spec for spec in _DEFAULT_DIMENSIONS}
+                rows = session.execute(
+                    select(DimensionRegistry).where(DimensionRegistry.dimension_id.in_(defaults))
+                ).scalars().all()
+                for row in rows:
+                    spec = defaults[row.dimension_id]
+                    if row.dimension_axis != spec["dimension_axis"]:
+                        row.dimension_axis = spec["dimension_axis"]
+                        row.updated_at = timestamp
             has_policy = session.execute(
                 select(func.count()).select_from(PolicyVersion)
             ).scalar_one()
@@ -1726,7 +1971,7 @@ class GovernanceService:
             if row is None:
                 raise NotFoundError("维度不存在")
             if row.created_by == actor:
-                raise ConflictError("独立性约束：审批人不能是创建人 (Maker-Checker)")
+                raise ConflictError("approver cannot be the creator")
             row.approved_by = actor
             row.updated_at = timestamp
             self._append_audit(
@@ -2113,25 +2358,45 @@ class GovernanceService:
             return {"user_id": user.id, "username": user.username, "roles": loads(user.roles_json)}
 
     def seed_users(self) -> dict[str, Any]:
-        """创建一组演示账号（幂等：已存在则跳过）。密码统一为 demo-pass。"""
+        """创建/修正三类演示账号，并禁用旧的细分角色账号。"""
         demo = [
-            ("reviewer_demo", ["reviewer_t1"]),
-            ("senior_demo", ["senior_reviewer"]),
-            ("ops_demo", ["ops_admin"]),
-            ("policy_pm_demo", ["policy_pm"]),
-            ("policy_approver_demo", ["policy_approver"]),
-            ("appeal_demo", ["appeal_reviewer"]),
-            ("qa_demo", ["qa_reviewer"]),
+            ("reviewer_demo", ["reviewer"]),
+            ("policy_admin_demo", ["policy_admin"]),
+            ("admin_demo", ["system_admin"]),
         ]
-        created: list[dict[str, Any]] = []
-        for username, roles in demo:
-            if self.authenticate(username, "demo-pass") is not None:
-                continue
-            try:
-                created.append(self.register_user(username, "demo-pass", roles))
-            except ConflictError:
-                continue
-        return {"password": "demo-pass", "users": created}
+        legacy = {
+            "senior_demo",
+            "ops_demo",
+            "policy_pm_demo",
+            "policy_approver_demo",
+            "appeal_demo",
+            "qa_demo",
+        }
+        users: list[dict[str, Any]] = []
+        with self._session_factory.begin() as session:
+            for username, roles in demo:
+                user = session.execute(select(User).where(User.username == username)).scalar_one_or_none()
+                if user is None:
+                    user = User(
+                        id=new_id("user"),
+                        username=username,
+                        password_hash=hash_password("demo-pass"),
+                        roles_json=dumps(roles),
+                        is_active=True,
+                        created_at=now_iso(),
+                    )
+                    session.add(user)
+                else:
+                    user.password_hash = hash_password("demo-pass")
+                    user.roles_json = dumps(roles)
+                    user.is_active = True
+                users.append({"user_id": user.id, "username": username, "roles": roles})
+
+            for username in legacy:
+                user = session.execute(select(User).where(User.username == username)).scalar_one_or_none()
+                if user is not None:
+                    user.is_active = False
+        return {"password": "demo-pass", "users": users, "disabled": sorted(legacy)}
 
     def get_audit(self, content_id: str | None = None) -> dict[str, Any]:
         with self._session_factory() as session:
@@ -2188,6 +2453,7 @@ class GovernanceService:
         creator_id: str,
         poi: str,
         video_url: str,
+        business_context: dict[str, Any],
         text: str,
     ) -> dict[str, Any]:
         risky_terms = ["gambling", "bet", "bonus", "qr", "scan", "violence", "weapon", "hate"]
@@ -2198,6 +2464,15 @@ class GovernanceService:
             title=title,
             description=description,
         )
+        context_fields = _context_metadata(business_context)
+        metadata = {
+            "title": title,
+            "description": description,
+            "creator_id": creator_id,
+            "poi": context_fields.get("poi") or poi,
+            "business_context": business_context,
+            **context_fields,
+        }
         return {
             "ep_id": evidence_id,
             "schema_version": "mvp-1.0",
@@ -2214,7 +2489,7 @@ class GovernanceService:
             "ocr_results": extracted["ocr_results"],
             "object_detections": extracted["object_detections"],
             "scene_tags": extracted["scene_tags"],
-            "metadata": {"title": title, "description": description, "creator_id": creator_id, "poi": poi},
+            "metadata": metadata,
             "pre_filter_results": {
                 "rule_hits": [{"rule_id": f"keyword:{term}", "term": term} for term in matched],
                 "cloud_api_hits": [],
@@ -2342,6 +2617,8 @@ class GovernanceService:
         )
 
     def _task_summary(self, row: dict[str, Any]) -> dict[str, Any]:
+        business_context = _safe_load_object(row.get("business_context_json"))
+        context_fields = _context_metadata(business_context)
         return {
             "task_id": row["id"],
             "content_id": row["content_id"],
@@ -2360,12 +2637,19 @@ class GovernanceService:
             "updated_at": row["updated_at"],
             "title": row.get("title"),
             "creator_id": row.get("creator_id"),
+            "business_context": business_context,
+            "shopping_cart_url": context_fields.get("shopping_cart_url", ""),
+            "product_title": context_fields.get("product_title", ""),
+            "product_category": context_fields.get("product_category", ""),
+            "merchant_name": context_fields.get("merchant_name", ""),
             "machine_recommendation": row.get("recommendation"),
             "machine_confidence": row.get("confidence"),
             "machine_rationale": row.get("rationale"),
         }
 
     def _machine_review_summary(self, row: dict[str, Any]) -> dict[str, Any]:
+        business_context = _safe_load_object(row.get("business_context_json"))
+        context_fields = _context_metadata(business_context)
         return {
             "review_id": row["id"],
             "content_id": row["content_id"],
@@ -2374,6 +2658,11 @@ class GovernanceService:
             "title": row["title"],
             "description": row["description"],
             "creator_id": row["creator_id"],
+            "business_context": business_context,
+            "shopping_cart_url": context_fields.get("shopping_cart_url", ""),
+            "product_title": context_fields.get("product_title", ""),
+            "product_category": context_fields.get("product_category", ""),
+            "merchant_name": context_fields.get("merchant_name", ""),
             "content_status": row["status"],
             "task_status": row["task_status"],
             "final_decision": row["final_decision"],
@@ -2473,7 +2762,7 @@ _DEFAULT_DIMENSIONS: list[dict[str, Any]] = [
     {
         "dimension_id": "dim_poi_match",
         "dimension_name": "内容与信息匹配",
-        "dimension_axis": "quality",
+        "dimension_axis": "business",
         "auto_block_threshold": 0.80,
         "human_review_threshold": 0.50,
     },

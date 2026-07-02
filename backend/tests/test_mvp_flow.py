@@ -107,24 +107,49 @@ class MvpFlowTest(unittest.TestCase):
             self.assertEqual(
                 {
                     "critical_gambling_block",
-                    "gambling_auto_block",
                     "drug_violence_auto_block",
-                    "marketing_needs_human_review",
+                    "marketing_auto_block",
+                    "context_mismatch_needs_human_review",
                     "cooking_auto_pass",
                 },
                 set(by_scenario),
             )
             self.assertEqual(by_scenario["critical_gambling_block"]["policy_decision"], "critical_escalate")
-            self.assertEqual(by_scenario["gambling_auto_block"]["policy_decision"], "auto_block")
             self.assertEqual(by_scenario["drug_violence_auto_block"]["policy_decision"], "auto_block")
+            self.assertEqual(by_scenario["marketing_auto_block"]["policy_decision"], "auto_block")
             self.assertEqual(
-                by_scenario["marketing_needs_human_review"]["policy_decision"],
+                by_scenario["context_mismatch_needs_human_review"]["policy_decision"],
                 "needs_human_review",
             )
             self.assertEqual(by_scenario["cooking_auto_pass"]["policy_decision"], "auto_pass")
-            self.assertEqual(by_scenario["marketing_needs_human_review"]["content_status"], "human_review")
-            self.assertIsNotNone(by_scenario["marketing_needs_human_review"]["task_id"])
+            self.assertEqual(by_scenario["context_mismatch_needs_human_review"]["content_status"], "human_review")
+            self.assertIsNotNone(by_scenario["context_mismatch_needs_human_review"]["task_id"])
             self.assertEqual(service.list_queue()["total"], 1)
+
+    def test_business_context_mismatch_routes_to_human_review(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            service = GovernanceService(Path(tmp) / "test.sqlite3")
+            queued = service.ingest_content(
+                {
+                    "title": "Park walk",
+                    "description": "A calm walk through a city park with trees and a lake.",
+                    "creator_id": "creator_context",
+                    "poi": "Shanghai Luxury Sushi Bar",
+                    "product_title": "Premium sushi platter",
+                    "product_category": "restaurant food",
+                    "shopping_cart_url": "https://shop.example.local/cart/sushi",
+                    "merchant_name": "Shanghai Luxury Sushi Bar",
+                }
+            )
+            self.assertEqual(service.drain_pipeline(), 1)
+
+            detail = service.get_machine_review(queued["content_id"])
+            self.assertEqual(detail["decision_summary"]["final_decision"], "needs_human_review")
+            self.assertEqual(detail["content_status"], "human_review")
+            self.assertEqual(detail["evidence"]["metadata"]["product_title"], "Premium sushi platter")
+            self.assertEqual(detail["shopping_cart_url"], "https://shop.example.local/cart/sushi")
+            context_verdict = [v for v in detail["verdicts"] if v["dimension_id"] == "dim_poi_match"][0]
+            self.assertEqual(context_verdict["decision"], "UNCERTAIN")
 
     def test_local_video_reference_generates_file_features(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -497,11 +522,11 @@ class MvpFlowTest(unittest.TestCase):
 
                 # ops 登录：能看死信队列，但无权看人审队列 -> 403
                 ops_token = client.post(
-                    "/api/v1/auth/login", json={"username": "ops_demo", "password": "demo-pass"}
+                    "/api/v1/auth/login", json={"username": "admin_demo", "password": "demo-pass"}
                 ).json()["access_token"]
                 ops = {"Authorization": f"Bearer {ops_token}"}
                 self.assertEqual(client.get("/api/v1/system/dead-letters", headers=ops).status_code, 200)
-                self.assertEqual(client.get("/api/v1/review/human/queue", headers=ops).status_code, 403)
+                self.assertEqual(client.get("/api/v1/review/human/queue", headers=ops).status_code, 200)
 
     def test_decide_uses_authenticated_reviewer(self) -> None:
         from fastapi.testclient import TestClient

@@ -26,6 +26,11 @@ class ContentUploadRequest(BaseModel):
     creator_id: str = Field("anonymous", description="创作者 ID")
     poi: str = Field("global", description="挂载地点 / POI")
     video_url: str = Field("", description="视频来源：远程 URL、本地路径或 file:// 路径")
+    shopping_cart_url: str = Field("", description="挂载购物车或落地页链接")
+    product_title: str = Field("", description="挂载商品标题")
+    product_category: str = Field("", description="挂载商品类目")
+    merchant_name: str = Field("", description="挂载商家名称")
+    business_context: dict[str, Any] = Field(default_factory=dict, description="附加业务上下文")
 
 
 class BatchIngestRequest(BaseModel):

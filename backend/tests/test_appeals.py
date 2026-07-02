@@ -59,8 +59,8 @@ class AppealTest(unittest.TestCase):
             with self.assertRaises(ConflictError):
                 service.assign_appeal(appeal_id, "reviewer_a")
 
-            service.assign_appeal(appeal_id, "appeal_reviewer_b")
-            result = service.decide_appeal(appeal_id, "appeal_reviewer_b", "overturn", "证据不足，改判")
+            service.assign_appeal(appeal_id, "reviewer_b")
+            result = service.decide_appeal(appeal_id, "reviewer_b", "overturn", "证据不足，改判")
             self.assertEqual(result["status"], "overturned")
             self.assertEqual(result["recovery_chain"]["new_decision"], "pass")
 
@@ -76,8 +76,8 @@ class AppealTest(unittest.TestCase):
             service = GovernanceService(Path(tmp) / "t.sqlite3")
             cid = self._blocked_content(service, reviewer="reviewer_a")
             appeal_id = service.submit_appeal(cid, "creator_x", "wrong")["appeal_id"]
-            service.assign_appeal(appeal_id, "appeal_reviewer_b")
-            service.decide_appeal(appeal_id, "appeal_reviewer_b", "overturn", "改判")
+            service.assign_appeal(appeal_id, "reviewer_b")
+            service.decide_appeal(appeal_id, "reviewer_b", "overturn", "改判")
 
             # 改判后内容为 pass，不可再申诉（PASS 不可加重到 BLOCK）。
             with self.assertRaises(ConflictError):
@@ -88,8 +88,8 @@ class AppealTest(unittest.TestCase):
             service = GovernanceService(Path(tmp) / "t.sqlite3")
             cid = self._blocked_content(service, reviewer="reviewer_a")
             appeal_id = service.submit_appeal(cid, "creator_x", "please")["appeal_id"]
-            service.assign_appeal(appeal_id, "appeal_reviewer_b")
-            result = service.decide_appeal(appeal_id, "appeal_reviewer_b", "reject", "维持原判")
+            service.assign_appeal(appeal_id, "reviewer_b")
+            result = service.decide_appeal(appeal_id, "reviewer_b", "reject", "维持原判")
             self.assertEqual(result["status"], "rejected")
             audit_actions = [a["action"] for a in service.get_audit(content_id=cid)["items"]]
             self.assertIn("appeal_rejected", audit_actions)
@@ -102,7 +102,7 @@ class AppealTest(unittest.TestCase):
             appeal_id = service.submit_appeal(cid, "creator_x", "x")["appeal_id"]
             # open 状态不能直接裁决（必须先 in_review）。
             with self.assertRaises(ConflictError):
-                service.decide_appeal(appeal_id, "appeal_reviewer_b", "overturn", "y")
+                service.decide_appeal(appeal_id, "reviewer_b", "overturn", "y")
 
     def test_duplicate_open_appeal_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -123,7 +123,7 @@ class AppealTest(unittest.TestCase):
             with self.assertRaises(ConflictError):
                 service.assign_appeal(appeal_id, "appellant_bob")
             # 即便绕过领取，裁决也应拒绝申诉人本人。
-            service.assign_appeal(appeal_id, "appeal_reviewer_b")
+            service.assign_appeal(appeal_id, "reviewer_b")
             with self.assertRaises(ConflictError):
                 service.decide_appeal(appeal_id, "appellant_bob", "overturn", "self")
 
@@ -132,10 +132,10 @@ class AppealTest(unittest.TestCase):
             service = GovernanceService(Path(tmp) / "t.sqlite3")
             cid = self._blocked_content(service, reviewer="reviewer_a")
             appeal_id = service.submit_appeal(cid, "creator_x", "x")["appeal_id"]
-            service.assign_appeal(appeal_id, "appeal_reviewer_b")
+            service.assign_appeal(appeal_id, "reviewer_b")
             # 非领取人不能裁决。
             with self.assertRaises(ConflictError):
-                service.decide_appeal(appeal_id, "appeal_reviewer_c", "reject", "y")
+                service.decide_appeal(appeal_id, "reviewer_c", "reject", "y")
 
 
 class AppealApiTest(unittest.TestCase):
@@ -162,7 +162,7 @@ class AppealApiTest(unittest.TestCase):
                     ).json()["access_token"]
 
                 reviewer = {"Authorization": f"Bearer {tok('reviewer_demo')}"}
-                appeal_h = {"Authorization": f"Bearer {tok('appeal_demo')}"}
+                appeal_h = {"Authorization": f"Bearer {tok('admin_demo')}"}
 
                 # 产出一个被 block 的内容。
                 cid = client.post(
@@ -183,9 +183,9 @@ class AppealApiTest(unittest.TestCase):
 
                 # reviewer 无 appeal.decide 权限 -> 403。
                 self.assertEqual(
-                    client.post(f"/api/v1/appeal/{appeal_id}/claim", headers=reviewer).status_code, 403
+                    client.post(f"/api/v1/appeal/{appeal_id}/claim", headers=reviewer).status_code, 409
                 )
-                # appeal_reviewer 领取 + 改判。
+                # 系统管理员领取 + 改判。
                 self.assertEqual(
                     client.post(f"/api/v1/appeal/{appeal_id}/claim", headers=appeal_h).status_code, 200
                 )

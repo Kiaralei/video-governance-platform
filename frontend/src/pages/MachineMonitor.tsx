@@ -35,7 +35,7 @@ function ruleLabel(rule: string) {
     dim_gambling: '博彩/彩票',
     dim_drug_violence: '毒品/暴力',
     dim_minor_compliance: '未成年合规',
-    dim_poi_match: 'POI 一致性',
+    dim_poi_match: '信息匹配',
     dim_marketing_review: '营销导流',
   }
   return `${dimensionName[dimension] || dimension}:${statusMeta('policy', decision).label}`
@@ -59,7 +59,8 @@ export function MachineMonitor() {
       const human = data.items.filter((item) => item.policy_decision === 'needs_human_review').length
       const blocked = data.items.filter((item) => item.final_decision === 'block').length
       const passed = data.items.filter((item) => item.final_decision === 'pass').length
-      Message.success(`已注入 ${data.total} 条演示案例：${blocked} 拦截 / ${human} 人审 / ${passed} 通过`)
+      const cleared = data.cleared ? `，已清理 ${data.cleared} 条旧演示数据` : ''
+      Message.success(`已注入 ${data.total} 条演示案例：${blocked} 拦截 / ${human} 人审 / ${passed} 通过${cleared}`)
       qc.invalidateQueries({ queryKey: ['dashboard'] })
       qc.invalidateQueries({ queryKey: ['machine-reviews'] })
       qc.invalidateQueries({ queryKey: ['queue'] })
@@ -97,6 +98,15 @@ export function MachineMonitor() {
         }
       />
 
+      <Card>
+        <div className="flow-strip">
+          <div className="flow-step"><Tag color="arcoblue">1</Tag><span>海量视频输入</span></div>
+          <div className="flow-step"><Tag color="arcoblue">2</Tag><span>内容安全 / 用户体验 / 信息匹配</span></div>
+          <div className="flow-step"><Tag color="orange">3</Tag><span>策略路由：通过、拦截或人审</span></div>
+          <div className="flow-step"><Tag color="green">4</Tag><span>准出 / 不准出</span></div>
+        </div>
+      </Card>
+
       <div className="metric-grid">
         <Card className="metric-card"><Statistic title="内容总量" value={s?.total_content ?? 0} /></Card>
         <Card className="metric-card"><Statistic title="待人审" value={s?.queue.pending ?? 0} styleValue={{ color: '#ff7d00' }} /></Card>
@@ -131,12 +141,12 @@ export function MachineMonitor() {
             </Tooltip>
           </div>
         </Card>
-        <Card title="特征源">
+        <Card title="特征链路">
           <div className="status-line">
-            <Tag color="arcoblue">ASR</Tag>
-            <Tag color="arcoblue">OCR</Tag>
+            <Tag color="arcoblue">ASR / OCR</Tag>
             <Tag color="arcoblue">Vision</Tag>
-            <Tag color="green">LLM gpt-5.5</Tag>
+            <Tag color="green">LLM / Rules</Tag>
+            <Tag color="gray">证据包展示真实可用性</Tag>
           </div>
         </Card>
       </div>

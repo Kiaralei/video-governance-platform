@@ -71,6 +71,18 @@ class ReviewQueueTest(unittest.TestCase):
             service = self._service(tmp)
             self.assertEqual(service.fetch_next("reviewer_a")["status"], "empty")
 
+    def test_current_case_returns_assigned_in_review_task(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            service = self._service(tmp)
+            self._ingest(service, NEUTRAL)
+            service.drain_pipeline()
+            assigned = service.fetch_next("reviewer_a")
+
+            current = service.current_case("reviewer_a")
+            self.assertEqual(current["status"], "assigned")
+            self.assertEqual(current["task"]["task_id"], assigned["task"]["task_id"])
+            self.assertEqual(service.current_case("reviewer_b")["status"], "empty")
+
     def test_independence_excludes_prior_reviewer(self):
         with tempfile.TemporaryDirectory() as tmp:
             service = self._service(tmp)

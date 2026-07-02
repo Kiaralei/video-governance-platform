@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -261,6 +261,12 @@ def evidence(request: Request, evidence_id: str) -> dict[str, Any]:
     return _service(request).get_evidence(evidence_id)
 
 
+@evidence_router.get("/evidence/{evidence_id}/frames/{frame_id}")
+def evidence_frame(request: Request, evidence_id: str, frame_id: str) -> FileResponse:
+    frame = _service(request).get_evidence_frame(evidence_id, frame_id)
+    return FileResponse(frame["path"], media_type=frame["media_type"])
+
+
 # --- human review (注意：静态路径 /queue 必须声明在 /{task_id} 之前) ----------
 
 @human_router.get("/queue", dependencies=[Depends(require_permission("review.human.queue"))])
@@ -279,6 +285,14 @@ def next_task(
     """按优先级原子领取下一个待审案件（含独立性 + 反疲劳约束）。"""
     jurisdiction = payload.jurisdiction if payload else None
     return _service(request).fetch_next(user.user_id, jurisdiction=jurisdiction)
+
+
+@human_router.get("/current")
+def current_task(
+    request: Request,
+    user: Principal = Depends(require_permission("review.human.decide")),
+) -> dict[str, Any]:
+    return _service(request).current_case(user.user_id)
 
 
 @human_router.get("/{task_id}", dependencies=[Depends(require_permission("review.human.queue"))])

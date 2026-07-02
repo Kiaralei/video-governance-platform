@@ -11,6 +11,7 @@ import {
 } from '@arco-design/web-react/icon'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
+import { canAccessRoute, defaultRouteForRoles, roleLabel } from '../auth/roleAccess'
 import { useWebSocket } from '../hooks/useWebSocket'
 import type { WsEnvelope } from '../api/types'
 
@@ -29,6 +30,10 @@ export function AppLayout() {
   const loc = useLocation()
   const { logout, roles } = useAuth()
   const [collapsed, setCollapsed] = useState(false)
+  const visibleMenu = MENU.filter((item) => canAccessRoute(item.key, roles))
+  const selectedKey = visibleMenu.some((item) => item.key === loc.pathname)
+    ? loc.pathname
+    : defaultRouteForRoles(roles)
 
   const { connected } = useWebSocket((e: WsEnvelope) => {
     const map: Record<string, string> = {
@@ -56,10 +61,10 @@ export function AppLayout() {
         <Menu
           theme="dark"
           mode="vertical"
-          selectedKeys={[loc.pathname]}
+          selectedKeys={[selectedKey]}
           onClickMenuItem={(key) => nav(key)}
         >
-          {MENU.map((item) => (
+          {visibleMenu.map((item) => (
             <Menu.Item key={item.key}>
               {item.icon}
               {item.label}
@@ -72,7 +77,7 @@ export function AppLayout() {
           <Space size="large">
           <div>
             <Typography.Text type="secondary">当前角色</Typography.Text>
-            <Typography.Text style={{ marginLeft: 8 }}>{roles.join(', ') || '—'}</Typography.Text>
+            <Typography.Text style={{ marginLeft: 8 }}>{roles.map(roleLabel).join(', ') || '—'}</Typography.Text>
           </div>
             <Tag color="arcoblue">Demo 环境</Tag>
             <Tag color="green">tenant: global</Tag>

@@ -122,10 +122,10 @@ class ObservabilityApiTest(unittest.TestCase):
                 self.assertEqual(client.get("/api/v1/system/health").json()["status"], "ok")
                 self.assertTrue(client.get("/api/v1/system/ready").json()["ready"])
 
-                # 审计完整性校验需 audit.read（compliance_auditor / policy_pm）。
+                # 审计完整性校验需 audit.read（policy_admin / system_admin）。
                 self.assertEqual(client.post("/api/v1/audit/integrity/verify").status_code, 401)
                 pm = client.post(
-                    "/api/v1/auth/login", json={"username": "policy_pm_demo", "password": "demo-pass"}
+                    "/api/v1/auth/login", json={"username": "policy_admin_demo", "password": "demo-pass"}
                 ).json()["access_token"]
                 verify = client.post(
                     "/api/v1/audit/integrity/verify", headers={"Authorization": f"Bearer {pm}"}

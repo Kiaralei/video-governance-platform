@@ -157,6 +157,26 @@ body {
   gap: 12px;
 }
 
+.flow-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.flow-step {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--vgp-border);
+  border-radius: 6px;
+  background: var(--vgp-surface-soft);
+  color: #4e5969;
+  font-size: 13px;
+  line-height: 18px;
+}
+
 .evidence-list {
   display: flex;
   flex-direction: column;
@@ -195,6 +215,51 @@ body {
   gap: 6px;
   align-items: center;
   min-width: 0;
+}
+
+.breakable {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.frame-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.frame-card {
+  min-width: 0;
+  border: 1px solid var(--vgp-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--vgp-surface-soft);
+}
+
+.frame-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  display: block;
+  background: #eef2f7;
+}
+
+.frame-placeholder {
+  display: grid;
+  place-items: center;
+  color: var(--vgp-muted);
+  font-size: 12px;
+}
+
+.frame-caption {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 6px;
+  padding: 7px 8px;
+  font-size: 12px;
+  line-height: 16px;
+  color: #4e5969;
 }
 
 .arco-card {
@@ -331,6 +396,8 @@ body {
 @media (max-width: 1180px) {
   .metric-grid,
   .panel-grid,
+  .flow-strip,
+  .frame-grid,
   .workbench-grid,
   .case-grid {
     grid-template-columns: 1fr;

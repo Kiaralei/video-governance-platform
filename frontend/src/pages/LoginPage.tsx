@@ -3,6 +3,7 @@ import { type FormEvent, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../auth/AuthContext'
 import { api } from '../api/client'
+import { defaultRouteForRoles } from '../auth/roleAccess'
 
 export function LoginPage() {
   const { login } = useAuth()
@@ -17,8 +18,8 @@ export function LoginPage() {
     setError('')
     setLoading(true)
     try {
-      await login(username, password)
-      nav('/workbench')
+      const roles = await login(username, password)
+      nav(defaultRouteForRoles(roles))
     } catch {
       setError('登录失败：请检查用户名和密码。')
     } finally {
@@ -79,7 +80,7 @@ export function LoginPage() {
         <Alert
           style={{ marginTop: 16 }}
           type="info"
-          content="演示模式：reviewer_demo / policy_pm_demo / policy_approver_demo / appeal_demo / qa_demo / ops_demo，密码均为 demo-pass。"
+          content="演示模式：reviewer_demo / policy_admin_demo / admin_demo，密码均为 demo-pass。"
         />
         <Button type="text" long onClick={seed} style={{ marginTop: 8 }}>初始化演示账号</Button>
       </Card>

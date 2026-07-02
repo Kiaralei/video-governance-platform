@@ -21,36 +21,25 @@ from .config import settings
 
 
 class Role(str, Enum):
-    REVIEWER_T1 = "reviewer_t1"
-    REVIEWER_T2 = "reviewer_t2"
-    REVIEWER_T3 = "reviewer_t3"
-    SENIOR_REVIEWER = "senior_reviewer"
-    QA_REVIEWER = "qa_reviewer"
-    APPEAL_REVIEWER = "appeal_reviewer"
-    POLICY_PM = "policy_pm"
-    POLICY_APPROVER = "policy_approver"
-    OPS_ADMIN = "ops_admin"
-    COMPLIANCE_AUDITOR = "compliance_auditor"
-    SYSTEM = "system"
+    REVIEWER = "reviewer"
+    POLICY_ADMIN = "policy_admin"
+    SYSTEM_ADMIN = "system_admin"
 
 
 # 端点权限映射（对齐设计 §7.3 的子集）。
 ENDPOINT_PERMISSIONS: dict[str, set[Role]] = {
-    "review.human.queue": {Role.REVIEWER_T1, Role.REVIEWER_T2, Role.REVIEWER_T3, Role.SENIOR_REVIEWER},
-    "review.human.decide": {Role.REVIEWER_T1, Role.REVIEWER_T2, Role.REVIEWER_T3, Role.SENIOR_REVIEWER},
-    "system.dead_letters": {Role.OPS_ADMIN},
-    "audit.read": {Role.COMPLIANCE_AUDITOR, Role.POLICY_PM},
-    # Stage 4：策略/维度管理（对齐设计 §7.3 —— Maker(policy_pm) / Checker(policy_approver)）。
-    "policy.read": {Role.POLICY_PM, Role.POLICY_APPROVER, Role.OPS_ADMIN, Role.COMPLIANCE_AUDITOR},
-    "policy.write": {Role.POLICY_PM},
-    "policy.approve": {Role.POLICY_APPROVER},
-    "policy.transition": {Role.POLICY_PM, Role.OPS_ADMIN},
-    # Stage 7：申诉闭环。二审排除原审由服务层按账号 ID 强校验。
-    "appeal.read": {Role.APPEAL_REVIEWER, Role.REVIEWER_T3, Role.SENIOR_REVIEWER, Role.COMPLIANCE_AUDITOR},
-    "appeal.decide": {Role.APPEAL_REVIEWER, Role.REVIEWER_T3},
-    # Stage 8：质检 + 数据回流。
-    "quality.read": {Role.QA_REVIEWER, Role.OPS_ADMIN, Role.COMPLIANCE_AUDITOR, Role.POLICY_PM},
-    "quality.write": {Role.QA_REVIEWER, Role.OPS_ADMIN},
+    "review.human.queue": {Role.REVIEWER, Role.SYSTEM_ADMIN},
+    "review.human.decide": {Role.REVIEWER, Role.SYSTEM_ADMIN},
+    "system.dead_letters": {Role.SYSTEM_ADMIN},
+    "audit.read": {Role.POLICY_ADMIN, Role.SYSTEM_ADMIN},
+    "policy.read": {Role.POLICY_ADMIN, Role.SYSTEM_ADMIN},
+    "policy.write": {Role.POLICY_ADMIN, Role.SYSTEM_ADMIN},
+    "policy.approve": {Role.POLICY_ADMIN, Role.SYSTEM_ADMIN},
+    "policy.transition": {Role.POLICY_ADMIN, Role.SYSTEM_ADMIN},
+    "appeal.read": {Role.REVIEWER, Role.SYSTEM_ADMIN},
+    "appeal.decide": {Role.REVIEWER, Role.SYSTEM_ADMIN},
+    "quality.read": {Role.POLICY_ADMIN, Role.SYSTEM_ADMIN},
+    "quality.write": {Role.SYSTEM_ADMIN},
 }
 
 

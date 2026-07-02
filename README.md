@@ -11,7 +11,7 @@
 
 人审最终裁定只有两态：`pass` 和 `block`。
 
-内容摄取接口只负责快速入库和排队。后台 worker 会异步生成证据包、关键词规则命中、维度判断、推荐动作和置信度。机审结果只作为建议，所有内容最终都会进入人审队列，由人工提交最终裁定。
+内容摄取接口只负责快速入库和排队。后台 worker 会异步生成证据包、关键词规则命中、维度判断、推荐动作和置信度。机审明确 `auto_pass` / `auto_block` / `critical_escalate` 时直接形成最终准出或拦截结果；只有 `needs_human_review` 的不确定内容才进入人审队列，由人工提交最终裁定。
 
 当前 worker 仍是标准库实现的本地轻量 worker，用来打通生产形态的异步骨架；正式运行数据库统一为 PostgreSQL，启动服务必须配置 `DATABASE_URL`。SQLite 仅保留给自动化测试显式传入临时 `db_path` 时使用。
 
@@ -81,7 +81,7 @@ $env:LLM_BASE_URL="https://api.openai.com/v1"
 python backend/run.py
 ```
 
-也可以使用 `OPENAI_API_KEY`、`OPENAI_MODEL`、`OPENAI_BASE_URL`。机审输出仍只作为人审建议，最终裁定只允许 `pass` 或 `block`。
+也可以使用 `OPENAI_API_KEY`、`OPENAI_MODEL`、`OPENAI_BASE_URL`。LLM/规则引擎共同产出机审维度结论；机审可直接终局通过或拦截，不确定内容才作为人审建议进入队列。对外最终裁定只允许 `pass` 或 `block`。
 
 媒体落地配置：
 
@@ -129,6 +129,7 @@ python scripts/smoke_test.py
 - `POST /api/v1/review/human/{task_id}/claim`
 - `POST /api/v1/review/human/{task_id}/decide`
 - `GET /api/v1/evidence/{evidence_package_id}`
+- `GET /api/v1/evidence/{evidence_package_id}/frames/{frame_id}`
 - `GET /api/v1/audit?content_id={content_id}`
 - `POST /api/v1/dev/seed`
 - `POST /api/v1/dev/reset`

@@ -5,7 +5,7 @@ import type { LoginResponse } from '../api/types'
 interface AuthState {
   roles: string[]
   authed: boolean
-  login: (username: string, password: string) => Promise<void>
+  login: (username: string, password: string) => Promise<string[]>
   logout: () => void
   hasRole: (...roles: string[]) => boolean
 }
@@ -26,6 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         tokenStore.set(data.access_token, data.refresh_token, data.roles)
         setRoles(data.roles)
         setAuthed(true)
+        return data.roles
       },
       logout: () => {
         tokenStore.clear()

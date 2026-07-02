@@ -42,6 +42,20 @@ export interface ReviewTask {
   title?: string
   machine_recommendation?: string
   machine_confidence?: number
+  business_context?: BusinessContext
+  shopping_cart_url?: string
+  product_title?: string
+  product_category?: string
+  merchant_name?: string
+}
+
+export interface BusinessContext {
+  poi?: { id?: string; name?: string; category?: string; city?: string; geo?: unknown }
+  shopping_cart?: { url?: string; landing_page_domain?: string }
+  product?: { title?: string; category?: string; sku_id?: string }
+  products?: unknown[]
+  merchant?: { id?: string; name?: string }
+  extra?: Record<string, unknown>
 }
 
 export interface CaseDetail {
@@ -53,6 +67,11 @@ export interface CaseDetail {
     creator_id: string
     poi: string
     video_url: string
+    business_context?: BusinessContext
+    shopping_cart_url?: string
+    product_title?: string
+    product_category?: string
+    merchant_name?: string
     final_decision: string | null
   }
   evidence: EvidencePackage
@@ -74,7 +93,9 @@ export interface ModalityInvocation {
 }
 
 export interface EvidencePackage {
+  ep_id?: string
   content_id?: string
+  metadata?: Record<string, unknown>
   media_asset?: {
     status?: string
     source_type?: string
@@ -101,6 +122,7 @@ export interface Dimension {
   dimension_name: string
   dimension_axis: string
   enabled: boolean
+  llm_review_enabled: boolean
   status: string
   version: number
   auto_block_threshold: number
@@ -146,6 +168,11 @@ export interface MachineReviewRow {
   title: string
   description: string
   creator_id: string
+  business_context?: BusinessContext
+  shopping_cart_url?: string
+  product_title?: string
+  product_category?: string
+  merchant_name?: string
   content_status: string
   task_status: string | null
   final_decision: string | null
@@ -175,6 +202,7 @@ export interface DemoCaseResult {
 
 export interface DemoCasesResponse {
   batch_id: string
+  cleared?: number
   total: number
   items: DemoCaseResult[]
 }

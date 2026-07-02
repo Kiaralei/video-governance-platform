@@ -355,8 +355,9 @@ class PolicyApiRbacTest(unittest.TestCase):
                     ).json()["access_token"]
 
                 reviewer = {"Authorization": f"Bearer {token('reviewer_demo')}"}
-                pm = {"Authorization": f"Bearer {token('policy_pm_demo')}"}
-                approver = {"Authorization": f"Bearer {token('policy_approver_demo')}"}
+                pm = {"Authorization": f"Bearer {token('policy_admin_demo')}"}
+                ops = {"Authorization": f"Bearer {token('admin_demo')}"}
+                approver = ops
 
                 # 未认证 -> 401
                 self.assertEqual(client.get("/api/v1/policy/dimensions").status_code, 401)
@@ -364,6 +365,7 @@ class PolicyApiRbacTest(unittest.TestCase):
                 self.assertEqual(client.get("/api/v1/policy/dimensions", headers=reviewer).status_code, 403)
                 # pm 可读
                 self.assertEqual(client.get("/api/v1/policy/dimensions", headers=pm).status_code, 200)
+                self.assertEqual(client.get("/api/v1/policy/dimensions", headers=ops).status_code, 200)
                 # pm 建维度（走完整生命周期）
                 created = client.post(
                     "/api/v1/policy/dimensions",
@@ -371,6 +373,14 @@ class PolicyApiRbacTest(unittest.TestCase):
                     json={"dimension_id": "dim_test_custom", "dimension_name": "测试", "enabled": True},
                 )
                 self.assertEqual(created.status_code, 200)
+                self.assertEqual(
+                    client.patch(
+                        "/api/v1/policy/dimensions/dim_test_custom",
+                        headers=ops,
+                        json={"dimension_name": "ops editable"},
+                    ).status_code,
+                    200,
+                )
                 # reviewer 无写权限 -> 403
                 self.assertEqual(
                     client.post(

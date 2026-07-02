@@ -193,7 +193,7 @@ class WebSocketTest(unittest.TestCase):
             with self._client(tmp) as client:
                 client.post("/api/v1/dev/seed-users")
                 reviewer = {"Authorization": f"Bearer {self._login(client, 'reviewer_demo')}"}
-                senior_access = self._login(client, "senior_demo")
+                senior_access = self._login(client, "reviewer_demo")
                 senior = {"Authorization": f"Bearer {senior_access}"}
                 senior_ws = client.post("/api/v1/auth/ws-token", headers=senior).json()["ws_token"]
 
@@ -210,6 +210,8 @@ class WebSocketTest(unittest.TestCase):
                         json={"decision": "pass", "reason": "ok"},
                     )
                     evt = ws.receive_json()
+                    while evt["type"] != "task_decided":
+                        evt = ws.receive_json()
                     self.assertEqual(evt["type"], "task_decided")
                     self.assertEqual(evt["payload"]["decision"], "pass")
 

@@ -18,6 +18,7 @@ const STATUS: Record<StatusKind, Record<string, { label: string; color: string }
   task: {
     pending: { label: '待领取', color: 'orange' },
     assigned: { label: '审核中', color: 'arcoblue' },
+    in_review: { label: '审核中', color: 'arcoblue' },
     decided: { label: '已裁定', color: 'green' },
     expired: { label: '已超时', color: 'red' },
     released: { label: '已释放', color: 'gray' },

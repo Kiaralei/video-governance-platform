@@ -7,10 +7,21 @@ import { MachineMonitor } from './pages/MachineMonitor'
 import { PolicyManagement } from './pages/PolicyManagement'
 import { AppealsPage } from './pages/AppealsPage'
 import { QualityPage } from './pages/QualityPage'
+import { canAccessRoute, defaultRouteForRoles } from './auth/roleAccess'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { authed } = useAuth()
   return authed ? children : <Navigate to="/login" replace />
+}
+
+function RoleHome() {
+  const { roles } = useAuth()
+  return <Navigate to={defaultRouteForRoles(roles)} replace />
+}
+
+function RequireRoute({ path, children }: { path: string; children: JSX.Element }) {
+  const { roles } = useAuth()
+  return canAccessRoute(path, roles) ? children : <RoleHome />
 }
 
 export default function App() {
@@ -25,12 +36,12 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<Navigate to="/workbench" replace />} />
-        <Route path="workbench" element={<ReviewWorkbench />} />
-        <Route path="monitor" element={<MachineMonitor />} />
-        <Route path="policy" element={<PolicyManagement />} />
-        <Route path="appeals" element={<AppealsPage />} />
-        <Route path="quality" element={<QualityPage />} />
+        <Route index element={<RoleHome />} />
+        <Route path="workbench" element={<RequireRoute path="/workbench"><ReviewWorkbench /></RequireRoute>} />
+        <Route path="monitor" element={<RequireRoute path="/monitor"><MachineMonitor /></RequireRoute>} />
+        <Route path="policy" element={<RequireRoute path="/policy"><PolicyManagement /></RequireRoute>} />
+        <Route path="appeals" element={<RequireRoute path="/appeals"><AppealsPage /></RequireRoute>} />
+        <Route path="quality" element={<RequireRoute path="/quality"><QualityPage /></RequireRoute>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

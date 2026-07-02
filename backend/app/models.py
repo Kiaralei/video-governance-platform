@@ -23,7 +23,7 @@ class User(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     username: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String, nullable=False)
-    roles_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON 数组，如 ["reviewer_t1"]
+    roles_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON 数组，如 ["reviewer"]
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
 
@@ -39,6 +39,7 @@ class ContentItem(Base):
     creator_id: Mapped[str] = mapped_column(String, nullable=False)
     poi: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     video_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    business_context_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     status: Mapped[str] = mapped_column(String, nullable=False)
     final_decision: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     created_at: Mapped[str] = mapped_column(String, nullable=False)
